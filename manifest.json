@@ -3,7 +3,7 @@
 "name": "MotionAnalyzer Pro Video Analysis",
 "icons": [
 {
-"src": "https://www.google.com/search?q=https://cdn-icons-png.flaticon.com/512/5219/5219258.png",
+"src": "./Logo.png",
 "type": "image/png",
 "sizes": "512x512",
 "purpose": "any maskable"
