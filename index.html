@@ -325,7 +325,7 @@
         
         let compareMode = false;
         let isSyncSliderDragging = false;
-        const SCRUB_SENSITIVITY = 35 / window.innerWidth; 
+        const SCRUB_SENSITIVITY = 25 / window.innerWidth; 
 
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
@@ -518,11 +518,11 @@
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
                 
-                if (Math.abs(state.velocity) > 0.005) {
+                if (Math.abs(state.velocity) > 0.01) {
                     seekInstant(video, video.currentTime + state.velocity);
-                    state.velocity *= 0.98; 
+                    state.velocity *= 0.95; 
                     
-                    state.tickPos += (state.velocity * 500); 
+                    state.tickPos += (state.velocity * 400); 
                     ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
                     
                     requestAnimationFrame(applyInertia);
@@ -568,13 +568,13 @@
                     
                     seekInstant(video, video.currentTime + state.velocity);
                     
-                    state.tickPos += (deltaX * 1.5);
+                    state.tickPos += (deltaX * 1);
                     ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
                 }
             }, {passive: false});
 
             jog.addEventListener('touchend', () => { 
-                if (state.isDragging && Math.abs(state.velocity) > 0.005) {
+                if (state.isDragging && Math.abs(state.velocity) > 0.01) {
                     state.inertiaActive = true;
                     applyInertia();
                 }
