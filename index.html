@@ -8,20 +8,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="MotionAnalyzer">
     
-    <!-- Apple Touch Icon (Wichtig für Home-Bildschirm) -->
     <link rel="apple-touch-icon" href="Logo.png">
-    
-    <!-- Verknüpfung zum Manifest -->
     <link rel="manifest" href="manifest.json">
 
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
 
-    <title>Video Analyser</title>
+    <title>Video Analyser - Optimized</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
             --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+        }
+        
+        * {
+            -webkit-tap-highlight-color: transparent;
         }
         
         body {
@@ -37,7 +38,6 @@
             font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
 
-        /* Splash Screen Styles */
         #splash-screen {
             position: fixed;
             top: 0;
@@ -95,6 +95,7 @@
             align-items: center;
             justify-content: center;
             will-change: transform;
+            transform: translate3d(0, 0, 0);
         }
 
         video {
@@ -102,6 +103,10 @@
             max-height: 100%;
             object-fit: contain;
             pointer-events: none;
+            /* Performance optimizations for Android */
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
 
         .jog-ticks {
@@ -118,6 +123,7 @@
             overflow: hidden;
             opacity: 0.6;
             mask-image: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
+            will-change: transform;
         }
 
         .tick-container {
@@ -125,7 +131,7 @@
             gap: 12px;
             height: 100%;
             align-items: flex-end;
-            transform: translateX(0px);
+            transform: translate3d(0px, 0, 0);
             will-change: transform;
         }
 
@@ -226,7 +232,6 @@
 </head>
 <body>
 
-    <!-- Splash Screen -->
     <div id="splash-screen">
         <img src="Logo.png" alt="Häusermann's Video Analyser" onerror="this.style.display='none'; document.getElementById('splash-text').style.display='block';">
         <h1 id="splash-text" class="text-white text-2xl font-bold tracking-widest hidden">Video Analyser</h1>
@@ -363,14 +368,47 @@
     </div>
 
     <script>
+        // ============================================================
+        // PERFORMANCE OPTIMIZATIONS FOR ANDROID
+        // ============================================================
+        
+        // Debounce utility for reducing function calls
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Throttle utility for consistent frame rate
+        function throttle(func, limit) {
+            let inThrottle;
+            return function(...args) {
+                if (!inThrottle) {
+                    func.apply(this, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, limit);
+                }
+            };
+        }
+
+        // Request animation frame with fallback
+        const requestFrame = window.requestAnimationFrame || 
+                            window.webkitRequestAnimationFrame || 
+                            function(callback) { setTimeout(callback, 16); };
+
         // Init Splash Screen
         window.addEventListener('load', () => {
             setTimeout(() => {
                 const splash = document.getElementById('splash-screen');
                 splash.classList.add('hidden');
-                // Optional: Remove from DOM after transition
                 setTimeout(() => splash.remove(), 500);
-            }, 2000); // 2 Sekunden Anzeigezeit
+            }, 1500);
         });
 
         const v1 = document.getElementById('v1');
@@ -382,11 +420,19 @@
         let offset1 = 0;
         let offset2 = 0;
         let syncDiff = 0;
-        const SCRUB_SENSITIVITY = 0.05;
+        
+        // Optimized scrub sensitivity for smoother Android performance
+        const SCRUB_SENSITIVITY = 0.03;
+        const MIN_SEEK_INTERVAL = 33; // ~30fps max seek rate
+        
+        // Seek throttling to prevent overwhelming the video decoder
+        let lastSeekTime = 0;
+        let pendingSeek = null;
 
         v1.addEventListener('loadedmetadata', () => {
             v1.playbackRate = parseFloat(document.getElementById('speed1').value);
         });
+        
         v2.addEventListener('loadedmetadata', () => {
             v2.playbackRate = parseFloat(document.getElementById('speed2').value);
         });
@@ -445,11 +491,13 @@
         function generateTicks(containerId) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
+            const fragment = document.createDocumentFragment();
             for(let i=0; i<100; i++) {
                 const tick = document.createElement('div');
                 tick.className = i % 10 === 0 ? 'tick major' : 'tick';
-                container.appendChild(tick);
+                fragment.appendChild(tick);
             }
+            container.appendChild(fragment);
         }
         generateTicks('ticks1');
         generateTicks('ticks2');
@@ -490,37 +538,56 @@
             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
+        // OPTIMIZED: Throttled seek with frame-perfect timing
         function seekInstant(video, time) {
             if (video.readyState < 2) return;
+            
+            const now = performance.now();
             const target = Math.max(0, Math.min(time, video.duration || Infinity));
+            
+            // Skip if too close to current position (sub-frame precision)
             if (Math.abs(video.currentTime - target) < 0.001) return;
-            video.currentTime = target;
-        }
-
-        function updateUI() {
-            const syncUIElements = () => {
-                document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
-                document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
-
-                const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-                const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-
-                document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
-                if (compareMode) {
-                    document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
-                    document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
-                    document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
-                    document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
-                }
-            };
-
-            if ('requestVideoFrameCallback' in v1) {
-                v1.requestVideoFrameCallback(syncUIElements);
-                if (compareMode) v2.requestVideoFrameCallback(syncUIElements);
-            } else {
-                requestAnimationFrame(syncUIElements);
+            
+            // Throttle seeks to prevent decoder overload on Android
+            if (now - lastSeekTime < MIN_SEEK_INTERVAL) {
+                pendingSeek = { video, target };
+                return;
             }
+            
+            lastSeekTime = now;
+            video.currentTime = target;
+            pendingSeek = null;
         }
+
+        // Process pending seeks
+        function processPendingSeeks() {
+            if (pendingSeek) {
+                const now = performance.now();
+                if (now - lastSeekTime >= MIN_SEEK_INTERVAL) {
+                    seekInstant(pendingSeek.video, pendingSeek.target);
+                }
+            }
+            requestFrame(processPendingSeeks);
+        }
+        processPendingSeeks();
+
+        // OPTIMIZED: Throttled UI updates to reduce repaints
+        const updateUI = throttle(() => {
+            document.getElementById('time1').textContent = formatTime(v1.currentTime, offset1);
+            document.getElementById('time2').textContent = formatTime(v2.currentTime, offset2);
+
+            const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+            const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
+            document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
+            
+            if (compareMode) {
+                document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
+                document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
+                document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
+                document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
+            }
+        }, 16); // ~60fps max UI update rate
 
         v1.ontimeupdate = updateUI;
         v2.ontimeupdate = updateUI;
@@ -587,17 +654,21 @@
             const handleStart = (e) => { 
                 e.preventDefault(); 
                 syncStep(step); 
-                timeout = setTimeout(() => { interval = setInterval(() => syncStep(step * 0.5), 40); }, 400); 
+                timeout = setTimeout(() => { 
+                    interval = setInterval(() => syncStep(step * 0.5), 50); 
+                }, 400); 
             };
             const stop = () => { clearTimeout(timeout); clearInterval(interval); };
-            btn.addEventListener('touchstart', handleStart);
+            btn.addEventListener('touchstart', handleStart, {passive: false});
             btn.addEventListener('mousedown', handleStart);
             btn.addEventListener('touchend', stop);
             btn.addEventListener('mouseup', stop);
+            btn.addEventListener('touchcancel', stop);
         }
         setupHoldStep('btnStepPrev', -1/30);
         setupHoldStep('btnStepNext', 1/30);
 
+        // OPTIMIZED: Zoom & Scrub with reduced repaints
         function setupZoomScrub(jogId, videoId, zoomId, ticksId) {
             const jog = document.getElementById(jogId);
             const video = document.getElementById(videoId);
@@ -605,75 +676,156 @@
             const ticks = document.getElementById(ticksId);
             
             let state = { 
-                isDragging: false, lastX: 0, scale: 1, posX: 0, posY: 0, 
-                initialDist: 0, initialScale: 1, lastTouchX: 0, lastTouchY: 0,
-                velocity: 0, inertiaActive: false, tickPos: 0
+                isDragging: false, 
+                lastX: 0, 
+                scale: 1, 
+                posX: 0, 
+                posY: 0, 
+                initialDist: 0, 
+                initialScale: 1, 
+                lastTouchX: 0, 
+                lastTouchY: 0,
+                velocity: 0, 
+                inertiaActive: false, 
+                tickPos: 0,
+                lastFrameTime: 0
             };
 
             const updateTransform = () => {
-                zoomWrapper.style.transform = `translate(${state.posX}px, ${state.posY}px) scale(${state.scale})`;
+                zoomWrapper.style.transform = `translate3d(${state.posX}px, ${state.posY}px, 0) scale(${state.scale})`;
             };
 
+            // OPTIMIZED: Reduced inertia friction for smoother Android performance
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
-                if (Math.abs(state.velocity) > 0.001) {
+                
+                const now = performance.now();
+                const deltaTime = now - state.lastFrameTime;
+                state.lastFrameTime = now;
+                
+                if (Math.abs(state.velocity) > 0.0005) {
                     const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
-                    if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
-                    else { seekInstant(video, targetTime); }
-                    state.velocity *= 0.95; 
-                    state.tickPos += (state.velocity * 1000); 
-                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                    requestAnimationFrame(applyInertia);
-                } else { state.inertiaActive = false; }
+                    
+                    if (isLocked) { 
+                        seekInstant(v1, targetTime); 
+                        seekInstant(v2, targetTime + syncDiff); 
+                    } else { 
+                        seekInstant(video, targetTime); 
+                    }
+                    
+                    // Smoother deceleration
+                    state.velocity *= 0.92;
+                    
+                    // Update tick position with proper timing
+                    state.tickPos += (state.velocity * 800); 
+                    ticks.style.transform = `translate3d(${state.tickPos % 200}px, 0, 0)`;
+                    
+                    requestFrame(applyInertia);
+                } else { 
+                    state.inertiaActive = false; 
+                }
             };
 
             jog.addEventListener('touchstart', (e) => {
                 state.inertiaActive = false; 
+                state.lastFrameTime = performance.now();
+                
                 if (e.touches.length === 2) {
-                    state.initialDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    state.initialDist = Math.sqrt(dx * dx + dy * dy);
                     state.initialScale = state.scale;
                     state.lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     state.lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
                 } else {
-                    state.isDragging = true; v1.pause(); v2.pause();
-                    state.lastX = e.touches[0].clientX; state.velocity = 0;
+                    state.isDragging = true; 
+                    v1.pause(); 
+                    v2.pause();
+                    state.lastX = e.touches[0].clientX; 
+                    state.velocity = 0;
                 }
             }, {passive: false});
 
-            jog.addEventListener('touchmove', (e) => {
+            // OPTIMIZED: Throttled touch move for consistent frame rate
+            const handleTouchMove = throttle((e) => {
                 if (e.touches.length === 2) {
                     e.preventDefault();
-                    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const d = Math.sqrt(dx * dx + dy * dy);
                     const curX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     const curY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    
                     state.scale = Math.max(1, Math.min(state.initialScale * (d / state.initialDist), 5));
-                    if (state.scale > 1) { state.posX += (curX - state.lastTouchX); state.posY += (curY - state.lastTouchY); } 
-                    else { state.posX = 0; state.posY = 0; }
-                    state.lastTouchX = curX; state.lastTouchY = curY;
+                    
+                    if (state.scale > 1) { 
+                        state.posX += (curX - state.lastTouchX); 
+                        state.posY += (curY - state.lastTouchY); 
+                    } else { 
+                        state.posX = 0; 
+                        state.posY = 0; 
+                    }
+                    
+                    state.lastTouchX = curX; 
+                    state.lastTouchY = curY;
                     updateTransform();
                 } else if (state.isDragging) {
                     const deltaX = e.touches[0].clientX - state.lastX;
+                    
+                    // Optimized velocity calculation
                     state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                     state.lastX = e.touches[0].clientX;
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
-                    if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
-                    else { seekInstant(video, targetTime); }
+                    
+                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.008);
+                    
+                    if (isLocked) { 
+                        seekInstant(v1, targetTime); 
+                        seekInstant(v2, targetTime + syncDiff); 
+                    } else { 
+                        seekInstant(video, targetTime); 
+                    }
+                    
                     state.tickPos += deltaX;
-                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
+                    ticks.style.transform = `translate3d(${state.tickPos % 200}px, 0, 0)`;
                 }
-            }, {passive: false});
+            }, 16); // ~60fps touch handling
+
+            jog.addEventListener('touchmove', handleTouchMove, {passive: false});
 
             jog.addEventListener('touchend', () => { 
-                if (state.isDragging && Math.abs(state.velocity) > 0.001) { state.inertiaActive = true; applyInertia(); }
+                if (state.isDragging && Math.abs(state.velocity) > 0.0005) { 
+                    state.inertiaActive = true; 
+                    state.lastFrameTime = performance.now();
+                    applyInertia(); 
+                }
                 state.isDragging = false; 
             });
             
-            jog.addEventListener('dblclick', () => { state.scale = 1; state.posX = 0; state.posY = 0; updateTransform(); });
+            jog.addEventListener('touchcancel', () => { 
+                state.isDragging = false; 
+                state.inertiaActive = false;
+            });
+            
+            jog.addEventListener('dblclick', () => { 
+                state.scale = 1; 
+                state.posX = 0; 
+                state.posY = 0; 
+                updateTransform(); 
+            });
         }
 
         setupZoomScrub('jog1', 'v1', 'zoom1', 'ticks1');
         setupZoomScrub('jog2', 'v2', 'zoom2', 'ticks2');
+
+        // OPTIMIZATION: Disable context menu on long press (Android)
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        
+        // OPTIMIZATION: Prevent bounce/rubber-band effect
+        document.body.addEventListener('touchmove', e => {
+            if (e.target.closest('.jog-overlay')) {
+                e.preventDefault();
+            }
+        }, {passive: false});
     </script>
 </body>
 </html>
-
