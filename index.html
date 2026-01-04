@@ -14,15 +14,19 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
 
-    <title>Video Analyser - Optimized</title>
+    <title>Video Analyser</title>
+
+    <!-- VERCEL WEB ANALYTICS - KORREKTE INTEGRATION FÜR PLAIN HTML -->
+    <script>
+        window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* ... (alle Styles bleiben gleich) ... */
         :root {
             --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
-        }
-        
-        * {
-            -webkit-tap-highlight-color: transparent;
         }
         
         body {
@@ -95,7 +99,6 @@
             align-items: center;
             justify-content: center;
             will-change: transform;
-            transform: translate3d(0, 0, 0);
         }
 
         video {
@@ -103,10 +106,6 @@
             max-height: 100%;
             object-fit: contain;
             pointer-events: none;
-            /* Performance optimizations for Android */
-            transform: translate3d(0, 0, 0);
-            backface-visibility: hidden;
-            -webkit-backface-visibility: hidden;
         }
 
         .jog-ticks {
@@ -123,7 +122,6 @@
             overflow: hidden;
             opacity: 0.6;
             mask-image: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
-            will-change: transform;
         }
 
         .tick-container {
@@ -131,7 +129,7 @@
             gap: 12px;
             height: 100%;
             align-items: flex-end;
-            transform: translate3d(0px, 0, 0);
+            transform: translateX(0px);
             will-change: transform;
         }
 
@@ -232,6 +230,7 @@
 </head>
 <body>
 
+    <!-- Splash Screen -->
     <div id="splash-screen">
         <img src="Logo.png" alt="Häusermann's Video Analyser" onerror="this.style.display='none'; document.getElementById('splash-text').style.display='block';">
         <h1 id="splash-text" class="text-white text-2xl font-bold tracking-widest hidden">Video Analyser</h1>
@@ -285,7 +284,7 @@
             </div>
 
             <div id="zoom1" class="zoom-wrapper">
-                <video id="v1" playsinline preload="metadata" muted webkit-playsinline></video>
+                <video id="v1" playsinline preload="auto" muted></video>
             </div>
             
             <div class="jog-ticks">
@@ -328,7 +327,7 @@
             </div>
 
             <div id="zoom2" class="zoom-wrapper">
-                <video id="v2" playsinline preload="metadata" muted webkit-playsinline></video>
+                <video id="v2" playsinline preload="auto" muted></video>
             </div>
 
             <div class="jog-ticks">
@@ -368,47 +367,32 @@
     </div>
 
     <script>
-        // ============================================================
-        // PERFORMANCE OPTIMIZATIONS FOR ANDROID
-        // ============================================================
+        // =================================================================
+        // VERCEL ANALYTICS - KORREKTES EVENT TRACKING
+        // =================================================================
         
-        // Debounce utility for reducing function calls
-        function debounce(func, wait) {
-            let timeout;
-            return function executedFunction(...args) {
-                const later = () => {
-                    clearTimeout(timeout);
-                    func(...args);
-                };
-                clearTimeout(timeout);
-                timeout = setTimeout(later, wait);
-            };
-        }
-
-        // Throttle utility for consistent frame rate
-        function throttle(func, limit) {
-            let inThrottle;
-            return function(...args) {
-                if (!inThrottle) {
-                    func.apply(this, args);
-                    inThrottle = true;
-                    setTimeout(() => inThrottle = false, limit);
-                }
-            };
-        }
-
-        // Request animation frame with fallback
-        const requestFrame = window.requestAnimationFrame || 
-                            window.webkitRequestAnimationFrame || 
-                            function(callback) { setTimeout(callback, 16); };
-
-        // Init Splash Screen
+        // Init Splash Screen & Analytics
         window.addEventListener('load', () => {
+            // PWA Detection
+            const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
+                         window.navigator.standalone === true;
+            
+            if (isPWA) {
+                console.log("App launched as PWA");
+                // Track PWA open event
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'pwa_open' });
+                }
+            }
+
+            // Splash Screen removal
             setTimeout(() => {
                 const splash = document.getElementById('splash-screen');
-                splash.classList.add('hidden');
-                setTimeout(() => splash.remove(), 500);
-            }, 1500);
+                if (splash) {
+                    splash.classList.add('hidden');
+                    setTimeout(() => splash.remove(), 600);
+                }
+            }, 2000);
         });
 
         const v1 = document.getElementById('v1');
@@ -420,29 +404,37 @@
         let offset1 = 0;
         let offset2 = 0;
         let syncDiff = 0;
-        
-        // Optimized scrub sensitivity for smoother Android performance
-        const SCRUB_SENSITIVITY = 0.03;
-        const MIN_SEEK_INTERVAL_SINGLE = 33; // ~30fps for single mode
-        const MIN_SEEK_INTERVAL_DUAL = 50;   // ~20fps for dual mode (less load)
-        let MIN_SEEK_INTERVAL = MIN_SEEK_INTERVAL_SINGLE;
-        
-        // Seek throttling to prevent overwhelming the video decoder
-        let lastSeekTime = 0;
+        const SCRUB_SENSITIVITY = 0.05;
 
         v1.addEventListener('loadedmetadata', () => {
             v1.playbackRate = parseFloat(document.getElementById('speed1').value);
+            // Track video load
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'video_loaded', data: { player: 1 } });
+            }
         });
         
         v2.addEventListener('loadedmetadata', () => {
             v2.playbackRate = parseFloat(document.getElementById('speed2').value);
+            // Track video load
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'video_loaded', data: { player: 2 } });
+            }
         });
 
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(e => console.error(e));
+                // Track fullscreen enter
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'fullscreen_enter' });
+                }
             } else {
                 document.exitFullscreen();
+                // Track fullscreen exit
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'fullscreen_exit' });
+                }
             }
         }
 
@@ -480,8 +472,13 @@
             document.getElementById('compareBtnText').innerText = compareMode ? 'SINGLE' : 'DUAL';
             workbench.className = compareMode ? 'mode-compare' : 'mode-single';
 
-            // Adjust seek interval based on mode
-            MIN_SEEK_INTERVAL = compareMode ? MIN_SEEK_INTERVAL_DUAL : MIN_SEEK_INTERVAL_SINGLE;
+            // Track mode change
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { 
+                    name: 'mode_changed', 
+                    data: { mode: compareMode ? 'dual' : 'single' } 
+                });
+            }
 
             if (compareMode) {
                 p2TopRight.prepend(fsBtn);
@@ -495,13 +492,11 @@
         function generateTicks(containerId) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
-            const fragment = document.createDocumentFragment();
             for(let i=0; i<100; i++) {
                 const tick = document.createElement('div');
                 tick.className = i % 10 === 0 ? 'tick major' : 'tick';
-                fragment.appendChild(tick);
+                container.appendChild(tick);
             }
-            container.appendChild(fragment);
         }
         generateTicks('ticks1');
         generateTicks('ticks2');
@@ -532,6 +527,11 @@
             if (id === 1) offset1 = v1.currentTime;
             else offset2 = v2.currentTime;
             updateUI();
+            
+            // Track timer reset
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'timer_reset', data: { player: id } });
+            }
         }
 
         function formatTime(seconds, offset = 0) {
@@ -542,67 +542,37 @@
             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
-        // OPTIMIZED: Batch seeks per video to prevent dual-mode overload
-        let seekQueue = {
-            v1: { target: null, pending: false },
-            v2: { target: null, pending: false }
-        };
-        
         function seekInstant(video, time) {
             if (video.readyState < 2) return;
-            
             const target = Math.max(0, Math.min(time, video.duration || Infinity));
-            
-            // Skip if too close to current position (sub-frame precision)
             if (Math.abs(video.currentTime - target) < 0.001) return;
-            
-            const videoId = video.id;
-            seekQueue[videoId].target = target;
-            seekQueue[videoId].pending = true;
+            video.currentTime = target;
         }
 
-        // Process pending seeks with proper throttling per video
-        function processPendingSeeks() {
-            const now = performance.now();
-            
-            if (now - lastSeekTime >= MIN_SEEK_INTERVAL) {
-                // Process v1 first (master in sync mode)
-                if (seekQueue.v1.pending && seekQueue.v1.target !== null) {
-                    v1.currentTime = seekQueue.v1.target;
-                    seekQueue.v1.pending = false;
-                    seekQueue.v1.target = null;
-                    lastSeekTime = now;
+        function updateUI() {
+            const syncUIElements = () => {
+                document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
+                document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
+
+                const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+                const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
+                document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
+                if (compareMode) {
+                    document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
+                    document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
+                    document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
+                    document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
                 }
-                // Only process v2 if not in locked sync mode, or with delay
-                else if (seekQueue.v2.pending && seekQueue.v2.target !== null && (!isLocked || !seekQueue.v1.pending)) {
-                    v2.currentTime = seekQueue.v2.target;
-                    seekQueue.v2.pending = false;
-                    seekQueue.v2.target = null;
-                    lastSeekTime = now;
-                }
+            };
+
+            if ('requestVideoFrameCallback' in v1) {
+                v1.requestVideoFrameCallback(syncUIElements);
+                if (compareMode) v2.requestVideoFrameCallback(syncUIElements);
+            } else {
+                requestAnimationFrame(syncUIElements);
             }
-            
-            requestFrame(processPendingSeeks);
         }
-        processPendingSeeks();
-
-        // OPTIMIZED: Throttled UI updates to reduce repaints
-        const updateUI = throttle(() => {
-            document.getElementById('time1').textContent = formatTime(v1.currentTime, offset1);
-            document.getElementById('time2').textContent = formatTime(v2.currentTime, offset2);
-
-            const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-            const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-
-            document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
-            
-            if (compareMode) {
-                document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
-                document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
-                document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
-                document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
-            }
-        }, 16); // ~60fps max UI update rate
 
         v1.ontimeupdate = updateUI;
         v2.ontimeupdate = updateUI;
@@ -618,9 +588,19 @@
                 text.innerText = "Sync Lock: EIN";
                 if (v1.paused) v2.pause(); else v2.play();
                 setGlobalSpeed(document.getElementById('globalSpeed').value);
+                
+                // Track sync lock enabled
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'sync_lock_enabled' });
+                }
             } else {
                 btn.classList.remove('active');
                 text.innerText = "Sync Lock";
+                
+                // Track sync lock disabled
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'sync_lock_disabled' });
+                }
             }
             updateUI();
         }
@@ -632,6 +612,11 @@
             document.getElementById('speed1').value = val;
             document.getElementById('speed2').value = val;
             document.getElementById('globalSpeed').value = val;
+            
+            // Track speed change
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'speed_changed', data: { speed: rate } });
+            }
         }
 
         function setSpeed(id, val) { 
@@ -669,21 +654,17 @@
             const handleStart = (e) => { 
                 e.preventDefault(); 
                 syncStep(step); 
-                timeout = setTimeout(() => { 
-                    interval = setInterval(() => syncStep(step * 0.5), 50); 
-                }, 400); 
+                timeout = setTimeout(() => { interval = setInterval(() => syncStep(step * 0.5), 40); }, 400); 
             };
             const stop = () => { clearTimeout(timeout); clearInterval(interval); };
-            btn.addEventListener('touchstart', handleStart, {passive: false});
+            btn.addEventListener('touchstart', handleStart);
             btn.addEventListener('mousedown', handleStart);
             btn.addEventListener('touchend', stop);
             btn.addEventListener('mouseup', stop);
-            btn.addEventListener('touchcancel', stop);
         }
         setupHoldStep('btnStepPrev', -1/30);
         setupHoldStep('btnStepNext', 1/30);
 
-        // OPTIMIZED: Zoom & Scrub with reduced repaints
         function setupZoomScrub(jogId, videoId, zoomId, ticksId) {
             const jog = document.getElementById(jogId);
             const video = document.getElementById(videoId);
@@ -691,137 +672,72 @@
             const ticks = document.getElementById(ticksId);
             
             let state = { 
-                isDragging: false, 
-                lastX: 0, 
-                scale: 1, 
-                posX: 0, 
-                posY: 0, 
-                initialDist: 0, 
-                initialScale: 1, 
-                lastTouchX: 0, 
-                lastTouchY: 0,
-                velocity: 0, 
-                inertiaActive: false, 
-                tickPos: 0,
-                lastFrameTime: 0
+                isDragging: false, lastX: 0, scale: 1, posX: 0, posY: 0, 
+                initialDist: 0, initialScale: 1, lastTouchX: 0, lastTouchY: 0,
+                velocity: 0, inertiaActive: false, tickPos: 0
             };
 
             const updateTransform = () => {
-                zoomWrapper.style.transform = `translate3d(${state.posX}px, ${state.posY}px, 0) scale(${state.scale})`;
+                zoomWrapper.style.transform = `translate(${state.posX}px, ${state.posY}px) scale(${state.scale})`;
             };
 
-            // OPTIMIZED: Reduced inertia friction for smoother Android performance
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
-                
-                const now = performance.now();
-                const deltaTime = now - state.lastFrameTime;
-                state.lastFrameTime = now;
-                
-                if (Math.abs(state.velocity) > 0.0005) {
-                    // OPTIMIZATION: In dual-mode, stagger seeks to prevent simultaneous decoding
-                    if (isLocked) {
-                        const targetTime = v1.currentTime + state.velocity;
-                        seekInstant(v1, targetTime);
-                        setTimeout(() => seekInstant(v2, targetTime + syncDiff), 10);
-                    } else {
-                        const targetTime = video.currentTime + state.velocity;
-                        seekInstant(video, targetTime);
-                    }
-                    
-                    // Smoother deceleration
-                    state.velocity *= 0.92;
-                    
-                    // Update tick position with proper timing
-                    state.tickPos += (state.velocity * 800); 
-                    ticks.style.transform = `translate3d(${state.tickPos % 200}px, 0, 0)`;
-                    
-                    requestFrame(applyInertia);
-                } else { 
-                    state.inertiaActive = false; 
-                }
+                if (Math.abs(state.velocity) > 0.001) {
+                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
+                    if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
+                    else { seekInstant(video, targetTime); }
+                    state.velocity *= 0.95; 
+                    state.tickPos += (state.velocity * 1000); 
+                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
+                    requestAnimationFrame(applyInertia);
+                } else { state.inertiaActive = false; }
             };
 
             jog.addEventListener('touchstart', (e) => {
                 state.inertiaActive = false; 
-                state.lastFrameTime = performance.now();
-                
                 if (e.touches.length === 2) {
-                    const dx = e.touches[0].clientX - e.touches[1].clientX;
-                    const dy = e.touches[0].clientY - e.touches[1].clientY;
-                    state.initialDist = Math.sqrt(dx * dx + dy * dy);
+                    state.initialDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
                     state.initialScale = state.scale;
                     state.lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     state.lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    
+                    // Track zoom start
+                    if (typeof window.va !== 'undefined') {
+                        window.va('event', { name: 'zoom_started' });
+                    }
                 } else {
-                    state.isDragging = true; 
-                    v1.pause(); 
-                    v2.pause();
-                    state.lastX = e.touches[0].clientX; 
-                    state.velocity = 0;
+                    state.isDragging = true; v1.pause(); v2.pause();
+                    state.lastX = e.touches[0].clientX; state.velocity = 0;
                 }
             }, {passive: false});
 
-            // OPTIMIZED: Throttled touch move for consistent frame rate
-            const handleTouchMove = throttle((e) => {
+            jog.addEventListener('touchmove', (e) => {
                 if (e.touches.length === 2) {
                     e.preventDefault();
-                    const dx = e.touches[0].clientX - e.touches[1].clientX;
-                    const dy = e.touches[0].clientY - e.touches[1].clientY;
-                    const d = Math.sqrt(dx * dx + dy * dy);
+                    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
                     const curX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     const curY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    
                     state.scale = Math.max(1, Math.min(state.initialScale * (d / state.initialDist), 5));
-                    
-                    if (state.scale > 1) { 
-                        state.posX += (curX - state.lastTouchX); 
-                        state.posY += (curY - state.lastTouchY); 
-                    } else { 
-                        state.posX = 0; 
-                        state.posY = 0; 
-                    }
-                    
-                    state.lastTouchX = curX; 
-                    state.lastTouchY = curY;
+                    if (state.scale > 1) { state.posX += (curX - state.lastTouchX); state.posY += (curY - state.lastTouchY); } 
+                    else { state.posX = 0; state.posY = 0; }
+                    state.lastTouchX = curX; state.lastTouchY = curY;
                     updateTransform();
                 } else if (state.isDragging) {
                     const deltaX = e.touches[0].clientX - state.lastX;
-                    
-                    // Optimized velocity calculation
                     state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                     state.lastX = e.touches[0].clientX;
-                    
-                    // OPTIMIZATION: In dual-mode, seek primary video first, sync later
-                    if (isLocked) {
-                        const targetTime = v1.currentTime + (deltaX * 0.008);
-                        seekInstant(v1, targetTime); 
-                        // Delay secondary seek to reduce simultaneous decoder load
-                        setTimeout(() => seekInstant(v2, targetTime + syncDiff), 8);
-                    } else {
-                        const targetTime = video.currentTime + (deltaX * 0.008);
-                        seekInstant(video, targetTime); 
-                    }
-                    
+                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
+                    if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
+                    else { seekInstant(video, targetTime); }
                     state.tickPos += deltaX;
-                    ticks.style.transform = `translate3d(${state.tickPos % 200}px, 0, 0)`;
+                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
                 }
-            }, compareMode ? 20 : 16); // Slower in dual mode
-
-            jog.addEventListener('touchmove', handleTouchMove, {passive: false});
+            }, {passive: false});
 
             jog.addEventListener('touchend', () => { 
-                if (state.isDragging && Math.abs(state.velocity) > 0.0005) { 
-                    state.inertiaActive = true; 
-                    state.lastFrameTime = performance.now();
-                    applyInertia(); 
-                }
+                if (state.isDragging && Math.abs(state.velocity) > 0.001) { state.inertiaActive = true; applyInertia(); }
                 state.isDragging = false; 
-            });
-            
-            jog.addEventListener('touchcancel', () => { 
-                state.isDragging = false; 
-                state.inertiaActive = false;
             });
             
             jog.addEventListener('dblclick', () => { 
@@ -829,21 +745,16 @@
                 state.posX = 0; 
                 state.posY = 0; 
                 updateTransform(); 
+                
+                // Track zoom reset
+                if (typeof window.va !== 'undefined') {
+                    window.va('event', { name: 'zoom_reset' });
+                }
             });
         }
 
         setupZoomScrub('jog1', 'v1', 'zoom1', 'ticks1');
         setupZoomScrub('jog2', 'v2', 'zoom2', 'ticks2');
-
-        // OPTIMIZATION: Disable context menu on long press (Android)
-        document.addEventListener('contextmenu', e => e.preventDefault());
-        
-        // OPTIMIZATION: Prevent bounce/rubber-band effect
-        document.body.addEventListener('touchmove', e => {
-            if (e.target.closest('.jog-overlay')) {
-                e.preventDefault();
-            }
-        }, {passive: false});
     </script>
 </body>
 </html>
