@@ -1,6 +1,6 @@
 {
-"short_name": "MotionAnalyzer",
-"name": "MotionAnalyzer Pro Video Analysis",
+"short_name": "Video Analyser",
+"name": "Häusermann's Video Analyser",
 "icons": [
 {
 "src": "./Logo.png",
@@ -18,4 +18,5 @@
 "orientation": "any"
 
 }
+
 
