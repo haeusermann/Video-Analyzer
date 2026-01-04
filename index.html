@@ -9,7 +9,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
 
-    <title>Video Analyser</title>
+    <title>MotionAnalyzer Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
@@ -36,19 +36,22 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background-color: #000;
+            background-color: #000; /* Hintergrundfarbe des Willkommensbildschirms */
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 9999;
-            transition: opacity 0.5s ease-out, visibility 0.5s;
+            transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.6s;
         }
 
         #splash-screen img {
-            max-width: 250px;
-            width: 60%;
+            max-width: 280px;
+            width: 70%;
             height: auto;
             object-fit: contain;
+            /* Stellt sicher, dass Transparenz korrekt behandelt wird */
+            background: transparent; 
+            display: block;
         }
 
         #splash-screen.hidden {
@@ -56,6 +59,7 @@
             visibility: hidden;
         }
         
+        /* Restliche App Styles */
         #workbench {
             display: grid;
             gap: 2px;
@@ -196,13 +200,6 @@
             transition: all 0.2s;
         }
 
-        .fullscreen-icon-wrapper {
-            transition: transform 0.3s ease;
-        }
-        .is-fullscreen .fullscreen-icon-wrapper {
-            transform: rotate(180deg);
-        }
-
         select.glass-select {
             background: rgba(15, 23, 42, 0.8);
             color: #60a5fa;
@@ -218,10 +215,12 @@
 </head>
 <body>
 
-    <!-- Splash Screen -->
+    <!-- Splash Screen mit Logo -->
     <div id="splash-screen">
-        <img src="Logo.png" alt="Häusermann's Video Analyser" onerror="this.style.display='none'; document.getElementById('splash-text').style.display='block';">
-        <h1 id="splash-text" class="text-white text-2xl font-bold tracking-widest hidden">Video Analyser</h1>
+        <!-- Logo.png aus dem Hauptverzeichnis -->
+        <img src="Logo.png" alt="Logo" id="main-logo" onload="this.style.opacity=1" style="opacity:0; transition: opacity 0.5s;">
+        <!-- Fallback Text falls Logo nicht lädt -->
+        <div id="fallback-text" class="hidden text-white font-bold tracking-widest text-xl">MOTION ANALYZER</div>
     </div>
 
     <main id="workbench" class="mode-single">
@@ -244,11 +243,9 @@
 
             <div id="p1TopRight" class="ui-overlay top-right">
                 <button id="fsBtnContainer" onclick="toggleFullscreen()" class="glass-btn shadow-lg">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="fullscreen-icon-wrapper">
-                        <path id="corner-tl" d="M9 3H3v6" />
-                        <path id="corner-tr" d="M15 3h6v6" />
-                        <path id="corner-bl" d="M9 21H3v-6" />
-                        <path id="corner-br" d="M15 21h6v-6" />
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path id="corner-tl" d="M9 3H3v6" /><path id="corner-tr" d="M15 3h6v6" />
+                        <path id="corner-bl" d="M9 21H3v-6" /><path id="corner-br" d="M15 21h6v-6" />
                     </svg>
                 </button>
                 <label class="glass-btn shadow-lg cursor-pointer">
@@ -334,16 +331,6 @@
                 <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
             </button>
             <button id="btnStepNext" class="w-12 h-10 glass-btn">+F</button>
-
-            <div class="flex items-center gap-2 bg-slate-900/50 px-3 h-10 rounded-xl border border-white/5">
-                <span class="text-[9px] font-black text-blue-500 uppercase">Speed</span>
-                <select onchange="setGlobalSpeed(this.value)" id="globalSpeed" class="glass-select border-none !bg-transparent">
-                    <option value="0.125">0.12x</option>
-                    <option value="0.25">0.25x</option>
-                    <option value="0.5">0.50x</option>
-                    <option value="1.0" selected>1.00x</option>
-                </select>
-            </div>
             
             <button onclick="toggleLock()" id="lockBtn" class="flex items-center gap-2 glass-btn h-10 px-4 min-w-[120px]">
                 <span id="lockIcon">
@@ -355,14 +342,23 @@
     </div>
 
     <script>
-        // Init Splash Screen
+        // Splash Screen Logik
         window.addEventListener('load', () => {
+            const logo = document.getElementById('main-logo');
+            
+            // Fallback falls Logo.png nicht existiert
+            logo.onerror = () => {
+                logo.classList.add('hidden');
+                document.getElementById('fallback-text').classList.remove('hidden');
+            };
+
+            // 2 Sekunden Timer für den Splash Screen
             setTimeout(() => {
                 const splash = document.getElementById('splash-screen');
                 splash.classList.add('hidden');
-                // Optional: Remove from DOM after transition
-                setTimeout(() => splash.remove(), 500);
-            }, 2000); // 2 Sekunden Anzeigezeit
+                // DOM sauber halten
+                setTimeout(() => splash.remove(), 600);
+            }, 2000);
         });
 
         const v1 = document.getElementById('v1');
@@ -376,13 +372,6 @@
         let syncDiff = 0;
         const SCRUB_SENSITIVITY = 0.05;
 
-        v1.addEventListener('loadedmetadata', () => {
-            v1.playbackRate = parseFloat(document.getElementById('speed1').value);
-        });
-        v2.addEventListener('loadedmetadata', () => {
-            v2.playbackRate = parseFloat(document.getElementById('speed2').value);
-        });
-
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(e => console.error(e));
@@ -390,29 +379,6 @@
                 document.exitFullscreen();
             }
         }
-
-        document.addEventListener('fullscreenchange', () => {
-            const isFS = !!document.fullscreenElement;
-            const container = document.getElementById('fsBtnContainer');
-            const tl = document.getElementById('corner-tl');
-            const tr = document.getElementById('corner-tr');
-            const bl = document.getElementById('corner-bl');
-            const br = document.getElementById('corner-br');
-
-            if (isFS) {
-                tl.setAttribute('d', 'M4 9h5V4');
-                tr.setAttribute('d', 'M20 9h-5V4');
-                bl.setAttribute('d', 'M4 15h5v5');
-                br.setAttribute('d', 'M20 15h-5v5');
-                container.classList.add('is-fullscreen');
-            } else {
-                tl.setAttribute('d', 'M9 3H3v6');
-                tr.setAttribute('d', 'M15 3h6v6');
-                bl.setAttribute('d', 'M9 21H3v-6');
-                br.setAttribute('d', 'M15 21h6v-6');
-                container.classList.remove('is-fullscreen');
-            }
-        });
 
         function toggleCompareMode() {
             compareMode = !compareMode;
@@ -425,13 +391,8 @@
             document.getElementById('compareBtnText').innerText = compareMode ? 'SINGLE' : 'DUAL';
             workbench.className = compareMode ? 'mode-compare' : 'mode-single';
 
-            if (compareMode) {
-                p2TopRight.prepend(fsBtn);
-                setGlobalSpeed(document.getElementById('globalSpeed').value);
-            } else {
-                p1TopRight.prepend(fsBtn);
-                isLocked = false;
-            }
+            if (compareMode) p2TopRight.prepend(fsBtn);
+            else p1TopRight.prepend(fsBtn);
         }
 
         function generateTicks(containerId) {
@@ -450,22 +411,8 @@
             const file = event.target.files[0];
             if (!file) return;
             const url = URL.createObjectURL(file);
-            
-            if (target === 'main') { 
-                v1.src = url; 
-                const speedSelect = document.getElementById('speed1');
-                speedSelect.value = "1.0";
-                v1.playbackRate = 1.0; 
-                v1.load(); 
-                offset1 = 0; 
-            } else { 
-                v2.src = url; 
-                const speedSelect = document.getElementById('speed2');
-                speedSelect.value = "1.0";
-                v2.playbackRate = 1.0;
-                v2.load(); 
-                offset2 = 0; 
-            }
+            if (target === 'main') { v1.src = url; v1.load(); offset1 = 0; } 
+            else { v2.src = url; v2.load(); offset2 = 0; }
         }
 
         function resetTimer(id) {
@@ -484,33 +431,20 @@
 
         function seekInstant(video, time) {
             if (video.readyState < 2) return;
-            const target = Math.max(0, Math.min(time, video.duration || Infinity));
-            if (Math.abs(video.currentTime - target) < 0.001) return;
-            video.currentTime = target;
+            video.currentTime = Math.max(0, Math.min(time, video.duration || Infinity));
         }
 
         function updateUI() {
-            const syncUIElements = () => {
-                document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
-                document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
-
-                const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-                const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-
-                document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
-                if (compareMode) {
-                    document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
-                    document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
-                    document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
-                    document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
-                }
-            };
-
-            if ('requestVideoFrameCallback' in v1) {
-                v1.requestVideoFrameCallback(syncUIElements);
-                if (compareMode) v2.requestVideoFrameCallback(syncUIElements);
-            } else {
-                requestAnimationFrame(syncUIElements);
+            document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
+            document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
+            
+            const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+            const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+            
+            document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
+            if (compareMode) {
+                document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
+                document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
             }
         }
 
@@ -520,36 +454,20 @@
         function toggleLock() {
             isLocked = !isLocked;
             const btn = document.getElementById('lockBtn');
-            const text = document.getElementById('lockText');
-
             if (isLocked) {
                 syncDiff = v2.currentTime - v1.currentTime;
                 btn.classList.add('active');
-                text.innerText = "Sync Lock: EIN";
-                if (v1.paused) v2.pause(); else v2.play();
-                setGlobalSpeed(document.getElementById('globalSpeed').value);
+                document.getElementById('lockText').innerText = "Sync Lock: EIN";
+                v2.playbackRate = v1.playbackRate;
             } else {
                 btn.classList.remove('active');
-                text.innerText = "Sync Lock";
+                document.getElementById('lockText').innerText = "Sync Lock";
             }
-            updateUI();
-        }
-
-        function setGlobalSpeed(val) {
-            const rate = parseFloat(val);
-            v1.playbackRate = rate;
-            v2.playbackRate = rate;
-            document.getElementById('speed1').value = val;
-            document.getElementById('speed2').value = val;
-            document.getElementById('globalSpeed').value = val;
         }
 
         function setSpeed(id, val) { 
             const v = document.getElementById(id);
             if (v) v.playbackRate = parseFloat(val);
-            if (compareMode && !isLocked) {
-                document.getElementById('globalSpeed').value = val;
-            }
         }
 
         function togglePlay(id) {
@@ -599,28 +517,10 @@
             let state = { 
                 isDragging: false, lastX: 0, scale: 1, posX: 0, posY: 0, 
                 initialDist: 0, initialScale: 1, lastTouchX: 0, lastTouchY: 0,
-                velocity: 0, inertiaActive: false, tickPos: 0
-            };
-
-            const updateTransform = () => {
-                zoomWrapper.style.transform = `translate(${state.posX}px, ${state.posY}px) scale(${state.scale})`;
-            };
-
-            const applyInertia = () => {
-                if (!state.inertiaActive) return;
-                if (Math.abs(state.velocity) > 0.001) {
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
-                    if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
-                    else { seekInstant(video, targetTime); }
-                    state.velocity *= 0.95; 
-                    state.tickPos += (state.velocity * 1000); 
-                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                    requestAnimationFrame(applyInertia);
-                } else { state.inertiaActive = false; }
+                tickPos: 0
             };
 
             jog.addEventListener('touchstart', (e) => {
-                state.inertiaActive = false; 
                 if (e.touches.length === 2) {
                     state.initialDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
                     state.initialScale = state.scale;
@@ -628,7 +528,7 @@
                     state.lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
                 } else {
                     state.isDragging = true; v1.pause(); v2.pause();
-                    state.lastX = e.touches[0].clientX; state.velocity = 0;
+                    state.lastX = e.touches[0].clientX;
                 }
             }, {passive: false});
 
@@ -642,12 +542,11 @@
                     if (state.scale > 1) { state.posX += (curX - state.lastTouchX); state.posY += (curY - state.lastTouchY); } 
                     else { state.posX = 0; state.posY = 0; }
                     state.lastTouchX = curX; state.lastTouchY = curY;
-                    updateTransform();
+                    zoomWrapper.style.transform = `translate(${state.posX}px, ${state.posY}px) scale(${state.scale})`;
                 } else if (state.isDragging) {
                     const deltaX = e.touches[0].clientX - state.lastX;
-                    state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                     state.lastX = e.touches[0].clientX;
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
+                    const targetTime = (isLocked && videoId === 'v1' ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
                     if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
                     else { seekInstant(video, targetTime); }
                     state.tickPos += deltaX;
@@ -655,12 +554,8 @@
                 }
             }, {passive: false});
 
-            jog.addEventListener('touchend', () => { 
-                if (state.isDragging && Math.abs(state.velocity) > 0.001) { state.inertiaActive = true; applyInertia(); }
-                state.isDragging = false; 
-            });
-            
-            jog.addEventListener('dblclick', () => { state.scale = 1; state.posX = 0; state.posY = 0; updateTransform(); });
+            jog.addEventListener('touchend', () => { state.isDragging = false; });
+            jog.addEventListener('dblclick', () => { state.scale = 1; state.posX = 0; state.posY = 0; zoomWrapper.style.transform = ''; });
         }
 
         setupZoomScrub('jog1', 'v1', 'zoom1', 'ticks1');
