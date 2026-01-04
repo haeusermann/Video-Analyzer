@@ -285,7 +285,7 @@
             </div>
 
             <div id="zoom1" class="zoom-wrapper">
-                <video id="v1" playsinline preload="auto" muted></video>
+                <video id="v1" playsinline preload="metadata" muted webkit-playsinline></video>
             </div>
             
             <div class="jog-ticks">
@@ -328,7 +328,7 @@
             </div>
 
             <div id="zoom2" class="zoom-wrapper">
-                <video id="v2" playsinline preload="auto" muted></video>
+                <video id="v2" playsinline preload="metadata" muted webkit-playsinline></video>
             </div>
 
             <div class="jog-ticks">
@@ -423,11 +423,12 @@
         
         // Optimized scrub sensitivity for smoother Android performance
         const SCRUB_SENSITIVITY = 0.03;
-        const MIN_SEEK_INTERVAL = 33; // ~30fps max seek rate
+        const MIN_SEEK_INTERVAL_SINGLE = 33; // ~30fps for single mode
+        const MIN_SEEK_INTERVAL_DUAL = 50;   // ~20fps for dual mode (less load)
+        let MIN_SEEK_INTERVAL = MIN_SEEK_INTERVAL_SINGLE;
         
         // Seek throttling to prevent overwhelming the video decoder
         let lastSeekTime = 0;
-        let pendingSeek = null;
 
         v1.addEventListener('loadedmetadata', () => {
             v1.playbackRate = parseFloat(document.getElementById('speed1').value);
@@ -478,6 +479,9 @@
             document.getElementById('syncPanel').classList.toggle('hidden');
             document.getElementById('compareBtnText').innerText = compareMode ? 'SINGLE' : 'DUAL';
             workbench.className = compareMode ? 'mode-compare' : 'mode-single';
+
+            // Adjust seek interval based on mode
+            MIN_SEEK_INTERVAL = compareMode ? MIN_SEEK_INTERVAL_DUAL : MIN_SEEK_INTERVAL_SINGLE;
 
             if (compareMode) {
                 p2TopRight.prepend(fsBtn);
@@ -538,35 +542,46 @@
             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
-        // OPTIMIZED: Throttled seek with frame-perfect timing
+        // OPTIMIZED: Batch seeks per video to prevent dual-mode overload
+        let seekQueue = {
+            v1: { target: null, pending: false },
+            v2: { target: null, pending: false }
+        };
+        
         function seekInstant(video, time) {
             if (video.readyState < 2) return;
             
-            const now = performance.now();
             const target = Math.max(0, Math.min(time, video.duration || Infinity));
             
             // Skip if too close to current position (sub-frame precision)
             if (Math.abs(video.currentTime - target) < 0.001) return;
             
-            // Throttle seeks to prevent decoder overload on Android
-            if (now - lastSeekTime < MIN_SEEK_INTERVAL) {
-                pendingSeek = { video, target };
-                return;
-            }
-            
-            lastSeekTime = now;
-            video.currentTime = target;
-            pendingSeek = null;
+            const videoId = video.id;
+            seekQueue[videoId].target = target;
+            seekQueue[videoId].pending = true;
         }
 
-        // Process pending seeks
+        // Process pending seeks with proper throttling per video
         function processPendingSeeks() {
-            if (pendingSeek) {
-                const now = performance.now();
-                if (now - lastSeekTime >= MIN_SEEK_INTERVAL) {
-                    seekInstant(pendingSeek.video, pendingSeek.target);
+            const now = performance.now();
+            
+            if (now - lastSeekTime >= MIN_SEEK_INTERVAL) {
+                // Process v1 first (master in sync mode)
+                if (seekQueue.v1.pending && seekQueue.v1.target !== null) {
+                    v1.currentTime = seekQueue.v1.target;
+                    seekQueue.v1.pending = false;
+                    seekQueue.v1.target = null;
+                    lastSeekTime = now;
+                }
+                // Only process v2 if not in locked sync mode, or with delay
+                else if (seekQueue.v2.pending && seekQueue.v2.target !== null && (!isLocked || !seekQueue.v1.pending)) {
+                    v2.currentTime = seekQueue.v2.target;
+                    seekQueue.v2.pending = false;
+                    seekQueue.v2.target = null;
+                    lastSeekTime = now;
                 }
             }
+            
             requestFrame(processPendingSeeks);
         }
         processPendingSeeks();
@@ -704,13 +719,14 @@
                 state.lastFrameTime = now;
                 
                 if (Math.abs(state.velocity) > 0.0005) {
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
-                    
-                    if (isLocked) { 
-                        seekInstant(v1, targetTime); 
-                        seekInstant(v2, targetTime + syncDiff); 
-                    } else { 
-                        seekInstant(video, targetTime); 
+                    // OPTIMIZATION: In dual-mode, stagger seeks to prevent simultaneous decoding
+                    if (isLocked) {
+                        const targetTime = v1.currentTime + state.velocity;
+                        seekInstant(v1, targetTime);
+                        setTimeout(() => seekInstant(v2, targetTime + syncDiff), 10);
+                    } else {
+                        const targetTime = video.currentTime + state.velocity;
+                        seekInstant(video, targetTime);
                     }
                     
                     // Smoother deceleration
@@ -776,19 +792,21 @@
                     state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                     state.lastX = e.touches[0].clientX;
                     
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.008);
-                    
-                    if (isLocked) { 
+                    // OPTIMIZATION: In dual-mode, seek primary video first, sync later
+                    if (isLocked) {
+                        const targetTime = v1.currentTime + (deltaX * 0.008);
                         seekInstant(v1, targetTime); 
-                        seekInstant(v2, targetTime + syncDiff); 
-                    } else { 
+                        // Delay secondary seek to reduce simultaneous decoder load
+                        setTimeout(() => seekInstant(v2, targetTime + syncDiff), 8);
+                    } else {
+                        const targetTime = video.currentTime + (deltaX * 0.008);
                         seekInstant(video, targetTime); 
                     }
                     
                     state.tickPos += deltaX;
                     ticks.style.transform = `translate3d(${state.tickPos % 200}px, 0, 0)`;
                 }
-            }, 16); // ~60fps touch handling
+            }, compareMode ? 20 : 16); // Slower in dual mode
 
             jog.addEventListener('touchmove', handleTouchMove, {passive: false});
 
