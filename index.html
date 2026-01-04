@@ -4,20 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
-    <!-- PWA und Mobile Optimierungen -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
 
-    <title>MotionAnalyzer Pro</title>
+    <title>Video Analyser</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
             --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
         }
         
-        /* Basis-Layout: Verhindert Scrollen und nutzt die gesamte Displayhöhe */
         body {
             overscroll-behavior-y: contain;
             touch-action: none;
@@ -30,8 +28,34 @@
             overflow: hidden;
             font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
+
+        /* Splash Screen Styles */
+        #splash-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out, visibility 0.5s;
+        }
+
+        #splash-screen img {
+            max-width: 250px;
+            width: 60%;
+            height: auto;
+            object-fit: contain;
+        }
+
+        #splash-screen.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
         
-        /* Haupt-Arbeitsbereich für die Video-Gitter */
         #workbench {
             display: grid;
             gap: 2px;
@@ -46,7 +70,6 @@
             .mode-compare { grid-template-columns: 1fr 1fr; }
         }
 
-        /* Container für Video und Zoom-Logik */
         .video-container {
             position: relative;
             background: #000;
@@ -73,7 +96,6 @@
             pointer-events: none;
         }
 
-        /* Jog-Wheel Visualisierung (Skala am unteren Rand) */
         .jog-ticks {
             position: absolute;
             bottom: 0;
@@ -102,7 +124,6 @@
         .tick { width: 1px; height: 12px; background: rgba(255,255,255,0.4); }
         .tick.major { height: 20px; background: #3b82f6; width: 2px; }
 
-        /* Unsichtbare Ebene für Gestensteuerung (Touch/Maus) */
         .jog-overlay {
             position: absolute;
             top: 0;
@@ -113,7 +134,6 @@
             touch-action: none;
         }
 
-        /* UI Overlays: Positionierung der Buttons */
         .ui-overlay {
             position: absolute;
             z-index: 30;
@@ -128,7 +148,6 @@
         .top-center { top: 0; left: 50%; transform: translateX(-50%); }
         .bottom-right { bottom: 0; right: 0; }
 
-        /* Modernes Button-Design (Glassmorphism) */
         .glass-btn {
             background: rgba(15, 23, 42, 0.8);
             backdrop-filter: blur(12px);
@@ -149,7 +168,6 @@
         .glass-btn.active { background: #3b82f6; color: white; border-color: #60a5fa; }
         .glass-btn.disabled { opacity: 0.3; pointer-events: none; }
 
-        /* Zeit-Anzeige Badge */
         .time-badge-container {
             display: flex;
             align-items: center;
@@ -178,7 +196,6 @@
             transition: all 0.2s;
         }
 
-        /* SVG Icon Transformation für Vollbild (4 Winkel) */
         .fullscreen-icon-wrapper {
             transition: transform 0.3s ease;
         }
@@ -201,8 +218,14 @@
 </head>
 <body>
 
+    <!-- Splash Screen -->
+    <div id="splash-screen">
+        <img src="Logo.png" alt="Häusermann's Video Analyser" onerror="this.style.display='none'; document.getElementById('splash-text').style.display='block';">
+        <h1 id="splash-text" class="text-white text-2xl font-bold tracking-widest hidden">Video Analyser</h1>
+    </div>
+
     <main id="workbench" class="mode-single">
-        <!-- PLAYER 1: Hauptansicht -->
+        <!-- PLAYER 1 -->
         <div id="player1" class="video-container">
             <div class="ui-overlay top-left">
                 <button onclick="toggleCompareMode()" id="compareBtn" class="glass-btn shadow-xl min-w-[70px]">
@@ -220,10 +243,8 @@
             </div>
 
             <div id="p1TopRight" class="ui-overlay top-right">
-                <!-- Vollbild-Button wird im Dual-Modus nach rechts verschoben -->
                 <button id="fsBtnContainer" onclick="toggleFullscreen()" class="glass-btn shadow-lg">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="fullscreen-icon-wrapper">
-                        <!-- Die 4 Winkel (Ecken) -->
                         <path id="corner-tl" d="M9 3H3v6" />
                         <path id="corner-tr" d="M15 3h6v6" />
                         <path id="corner-bl" d="M9 21H3v-6" />
@@ -241,8 +262,8 @@
                     <select onchange="setSpeed('v1', this.value)" id="speed1" class="glass-select">
                         <option value="0.125">0.12x</option>
                         <option value="0.25">0.25x</option>
-                        <option value="0.5" selected>0.50x</option>
-                        <option value="1.0">1.00x</option>
+                        <option value="0.5">0.50x</option>
+                        <option value="1.0" selected>1.00x</option>
                     </select>
                     <button onclick="togglePlay('v1')" id="playBtn1" class="glass-btn bg-blue-600/80 w-12 h-12 rounded-full">
                         <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -261,7 +282,7 @@
             <div class="jog-overlay" id="jog1"></div>
         </div>
 
-        <!-- PLAYER 2: Vergleichsansicht -->
+        <!-- PLAYER 2 -->
         <div id="player2" class="video-container hidden">
             <div class="ui-overlay top-center">
                 <div class="time-badge-container">
@@ -273,7 +294,6 @@
             </div>
 
             <div id="p2TopRight" class="ui-overlay top-right">
-                <!-- Platzhalter für Vollbild-Button im Dual-Modus -->
                 <label class="glass-btn shadow-lg cursor-pointer">
                     VIDEO
                     <input type="file" accept="video/*" class="hidden" onchange="loadVideo(event, 'compare')">
@@ -285,10 +305,10 @@
                     <select onchange="setSpeed('v2', this.value)" id="speed2" class="glass-select">
                         <option value="0.125">0.12x</option>
                         <option value="0.25">0.25x</option>
-                        <option value="0.5" selected>0.50x</option>
-                        <option value="1.0">1.00x</option>
+                        <option value="0.5">0.50x</option>
+                        <option value="1.0" selected>1.00x</option>
                     </select>
-                    <button onclick="togglePlay('v2')" id="playBtn2" class="glass-btn w-12 h-12 rounded-full">
+                    <button onclick="togglePlay('v2')" id="playBtn2" class="glass-btn w-12 h-10 rounded-full">
                         <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                     </button>
                 </div>
@@ -306,7 +326,7 @@
         </div>
     </main>
 
-    <!-- SYNC PANEL: Steuerung für den Dual-Modus -->
+    <!-- SYNC PANEL -->
     <div id="syncPanel" class="hidden bg-black border-t border-slate-800 p-2 shrink-0 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div class="flex items-center justify-center max-w-4xl mx-auto gap-3">
             <button id="btnStepPrev" class="w-12 h-10 glass-btn">-F</button>
@@ -320,8 +340,8 @@
                 <select onchange="setGlobalSpeed(this.value)" id="globalSpeed" class="glass-select border-none !bg-transparent">
                     <option value="0.125">0.12x</option>
                     <option value="0.25">0.25x</option>
-                    <option value="0.5" selected>0.50x</option>
-                    <option value="1.0">1.00x</option>
+                    <option value="0.5">0.50x</option>
+                    <option value="1.0" selected>1.00x</option>
                 </select>
             </div>
             
@@ -335,9 +355,16 @@
     </div>
 
     <script>
-        /**
-         * Globale Zustandsvariablen der App
-         */
+        // Init Splash Screen
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                const splash = document.getElementById('splash-screen');
+                splash.classList.add('hidden');
+                // Optional: Remove from DOM after transition
+                setTimeout(() => splash.remove(), 500);
+            }, 2000); // 2 Sekunden Anzeigezeit
+        });
+
         const v1 = document.getElementById('v1');
         const v2 = document.getElementById('v2');
         const workbench = document.getElementById('workbench');
@@ -346,12 +373,16 @@
         let isLocked = false;
         let offset1 = 0;
         let offset2 = 0;
-        let syncDiff = 0; // Differenz zwischen Video 1 und Video 2 bei aktiviertem Lock
+        let syncDiff = 0;
         const SCRUB_SENSITIVITY = 0.05;
 
-        /**
-         * Vollbild-Funktionalität inkl. Icon-Anpassung
-         */
+        v1.addEventListener('loadedmetadata', () => {
+            v1.playbackRate = parseFloat(document.getElementById('speed1').value);
+        });
+        v2.addEventListener('loadedmetadata', () => {
+            v2.playbackRate = parseFloat(document.getElementById('speed2').value);
+        });
+
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(e => console.error(e));
@@ -360,9 +391,6 @@
             }
         }
 
-        /**
-         * Überwacht Fullscreen-Wechsel, um die Optik der 4 Winkel anzupassen
-         */
         document.addEventListener('fullscreenchange', () => {
             const isFS = !!document.fullscreenElement;
             const container = document.getElementById('fsBtnContainer');
@@ -372,14 +400,12 @@
             const br = document.getElementById('corner-br');
 
             if (isFS) {
-                // Winkel zeigen nach innen (Verkleinern)
                 tl.setAttribute('d', 'M4 9h5V4');
                 tr.setAttribute('d', 'M20 9h-5V4');
                 bl.setAttribute('d', 'M4 15h5v5');
                 br.setAttribute('d', 'M20 15h-5v5');
                 container.classList.add('is-fullscreen');
             } else {
-                // Winkel zeigen nach außen (Vergrößern)
                 tl.setAttribute('d', 'M9 3H3v6');
                 tr.setAttribute('d', 'M15 3h6v6');
                 bl.setAttribute('d', 'M9 21H3v-6');
@@ -388,9 +414,6 @@
             }
         });
 
-        /**
-         * Wechselt zwischen Einzel- und Dualansicht (Vergleichsmodus)
-         */
         function toggleCompareMode() {
             compareMode = !compareMode;
             const p1TopRight = document.getElementById('p1TopRight');
@@ -402,7 +425,6 @@
             document.getElementById('compareBtnText').innerText = compareMode ? 'SINGLE' : 'DUAL';
             workbench.className = compareMode ? 'mode-compare' : 'mode-single';
 
-            // Vollbild-Button Logik: Verschiebt den Button nach Player 2 im Dual-Modus
             if (compareMode) {
                 p2TopRight.prepend(fsBtn);
                 setGlobalSpeed(document.getElementById('globalSpeed').value);
@@ -412,9 +434,6 @@
             }
         }
 
-        /**
-         * Erstellt optische Markierungen (Ticks) für das Jog-Wheel
-         */
         function generateTicks(containerId) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
@@ -427,29 +446,34 @@
         generateTicks('ticks1');
         generateTicks('ticks2');
 
-        /**
-         * Lädt ein lokales Video in den gewünschten Player
-         */
         function loadVideo(event, target) {
             const file = event.target.files[0];
             if (!file) return;
             const url = URL.createObjectURL(file);
-            if (target === 'main') { v1.src = url; v1.load(); offset1 = 0; } 
-            else { v2.src = url; v2.load(); offset2 = 0; }
+            
+            if (target === 'main') { 
+                v1.src = url; 
+                const speedSelect = document.getElementById('speed1');
+                speedSelect.value = "1.0";
+                v1.playbackRate = 1.0; 
+                v1.load(); 
+                offset1 = 0; 
+            } else { 
+                v2.src = url; 
+                const speedSelect = document.getElementById('speed2');
+                speedSelect.value = "1.0";
+                v2.playbackRate = 1.0;
+                v2.load(); 
+                offset2 = 0; 
+            }
         }
 
-        /**
-         * Setzt den Analyse-Timer (Nullpunkt) auf die aktuelle Videoposition
-         */
         function resetTimer(id) {
             if (id === 1) offset1 = v1.currentTime;
             else offset2 = v2.currentTime;
             updateUI();
         }
 
-        /**
-         * Formatiert Zeit in MM:SS.ms unter Berücksichtigung des Offsets
-         */
         function formatTime(seconds, offset = 0) {
             const diff = Math.max(0, seconds - offset);
             const m = Math.floor(diff / 60);
@@ -458,39 +482,41 @@
             return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
         }
 
-        /**
-         * Schnelles Anspringen einer Videoposition ohne Ladeverzögerung
-         */
         function seekInstant(video, time) {
             if (video.readyState < 2) return;
-            video.currentTime = Math.max(0, Math.min(time, video.duration || Infinity));
+            const target = Math.max(0, Math.min(time, video.duration || Infinity));
+            if (Math.abs(video.currentTime - target) < 0.001) return;
+            video.currentTime = target;
         }
 
-        /**
-         * Synchronisiert die Benutzeroberfläche mit den Videodaten
-         */
         function updateUI() {
-            document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
-            document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
+            const syncUIElements = () => {
+                document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
+                document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
 
-            const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-            const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+                const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+                const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
 
-            document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
-            if (compareMode) {
-                document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
-                document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
-                document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
-                document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
+                document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
+                if (compareMode) {
+                    document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
+                    document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
+                    document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
+                    document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
+                }
+            };
+
+            if ('requestVideoFrameCallback' in v1) {
+                v1.requestVideoFrameCallback(syncUIElements);
+                if (compareMode) v2.requestVideoFrameCallback(syncUIElements);
+            } else {
+                requestAnimationFrame(syncUIElements);
             }
         }
 
         v1.ontimeupdate = updateUI;
         v2.ontimeupdate = updateUI;
 
-        /**
-         * Schaltet den Synchronisations-Lock (Koppelung) ein oder aus
-         */
         function toggleLock() {
             isLocked = !isLocked;
             const btn = document.getElementById('lockBtn');
@@ -501,6 +527,7 @@
                 btn.classList.add('active');
                 text.innerText = "Sync Lock: EIN";
                 if (v1.paused) v2.pause(); else v2.play();
+                setGlobalSpeed(document.getElementById('globalSpeed').value);
             } else {
                 btn.classList.remove('active');
                 text.innerText = "Sync Lock";
@@ -509,14 +536,20 @@
         }
 
         function setGlobalSpeed(val) {
-            v1.playbackRate = v2.playbackRate = parseFloat(val);
+            const rate = parseFloat(val);
+            v1.playbackRate = rate;
+            v2.playbackRate = rate;
             document.getElementById('speed1').value = val;
             document.getElementById('speed2').value = val;
+            document.getElementById('globalSpeed').value = val;
         }
 
         function setSpeed(id, val) { 
             const v = document.getElementById(id);
-            if (v) v.playbackRate = parseFloat(val); 
+            if (v) v.playbackRate = parseFloat(val);
+            if (compareMode && !isLocked) {
+                document.getElementById('globalSpeed').value = val;
+            }
         }
 
         function togglePlay(id) {
@@ -531,9 +564,6 @@
             else { v1.play(); v2.play(); }
         }
 
-        /**
-         * Schrittweise Navigation (Frames vor/zurück)
-         */
         function syncStep(val) {
             v1.pause(); v2.pause();
             const targetTime = v1.currentTime + val;
@@ -542,9 +572,6 @@
             else seekInstant(v2, v2.currentTime + val);
         }
 
-        /**
-         * Konfiguriert die Button-Logik für "Gedrückthalten" zum schnellen Spulen
-         */
         function setupHoldStep(btnId, step) {
             const btn = document.getElementById(btnId);
             let interval = null;
@@ -563,9 +590,6 @@
         setupHoldStep('btnStepPrev', -1/30);
         setupHoldStep('btnStepNext', 1/30);
 
-        /**
-         * GESTEN-ENGINE: Steuert Zoom, Panning und Scrubbing mit Trägheit
-         */
         function setupZoomScrub(jogId, videoId, zoomId, ticksId) {
             const jog = document.getElementById(jogId);
             const video = document.getElementById(videoId);
@@ -585,9 +609,9 @@
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
                 if (Math.abs(state.velocity) > 0.001) {
-                    const targetTime = v1.currentTime + state.velocity;
+                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
                     if (isLocked) { seekInstant(v1, targetTime); seekInstant(v2, targetTime + syncDiff); } 
-                    else { seekInstant(video, video.currentTime + state.velocity); }
+                    else { seekInstant(video, targetTime); }
                     state.velocity *= 0.95; 
                     state.tickPos += (state.velocity * 1000); 
                     ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
