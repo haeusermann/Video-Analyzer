@@ -1,6 +1,6 @@
 {
-"short_name": "Test Video Analyser",
-"name": "Test Video Analyser",
+"short_name": "Video Analyser",
+"name": "Häusermann's Video Analyser",
 "icons": [
 {
 "src": "./Logo.png",
@@ -18,3 +18,4 @@
 "orientation": "any"
 
 }
+
