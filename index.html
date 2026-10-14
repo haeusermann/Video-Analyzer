@@ -333,6 +333,7 @@
             /* Semi-transparent dark background */
             background: rgba(15, 23, 42, 0.8);
             /* Frosted glass blur effect */
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.1);
             color: white;
@@ -372,6 +373,7 @@
         /* ============================================================= */
         .frame-step-btn {
             background: rgba(15, 23, 42, 0.85);
+            -webkit-backdrop-filter: blur(12px);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.15);
             color: white;
@@ -411,6 +413,7 @@
             align-items: center;
             gap: 8px;
             background: rgba(0, 0, 0, 0.6);
+            -webkit-backdrop-filter: blur(8px);
             backdrop-filter: blur(8px);
             padding: 4px 12px;
             /* Rounded bottom corners - attaches to top edge */
@@ -521,6 +524,37 @@
         }
 
         /* ============================================================= */
+        /* ERROR BANNER - Non-intrusive video load/playback error toast  */
+        /* ============================================================= */
+        #errorBanner {
+            position: fixed;
+            top: env(safe-area-inset-top, 0px);
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            z-index: 9998;
+            background: rgba(127, 29, 29, 0.92);
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(248, 113, 113, 0.4);
+            color: #fecaca;
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            max-width: 90vw;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            margin-top: 10px;
+        }
+
+        #errorBanner.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* ============================================================= */
         /* SYNC FRAME CONTROLS - Frame step buttons in sync panel        */
         /* ============================================================= */
         .sync-frame-controls {
@@ -551,6 +585,9 @@
         <img src="Logo.png" alt="Häusermann's Video Analyser" onerror="this.style.display='none'; document.getElementById('splash-text').style.display='block';">
         <h1 id="splash-text" class="text-white text-2xl font-bold tracking-widest hidden">Video Analyser</h1>
     </div>
+
+    <!-- Error banner - shown briefly on video load/playback errors -->
+    <div id="errorBanner"></div>
 
     <!-- ================================================================= -->
     <!-- MAIN WORKBENCH - Video player grid                                -->
@@ -891,12 +928,93 @@
         let syncLockStartTime1 = 0;  // Video 1 position when sync lock was activated
         let syncLockStartTime2 = 0;  // Video 2 position when sync lock was activated
         
-        // Scrub sensitivity: Controls how fast video scrubs when dragging
-        // Higher value = faster scrubbing, 0.0625 = 25% increase from default
-        const SCRUB_SENSITIVITY = 0.0625;
-        
+        // Scrub sensitivity: seconds of video seeked per pixel of drag.
+        // Used consistently for both the live drag and the release inertia,
+        // so raising this value speeds up both in the same way.
+        const SCRUB_PIXELS_TO_SECONDS = 0.01;
+
         // Slow playback speed when holding frame step buttons (0.25x)
         const HOLD_PLAY_SPEED = 0.25;
+
+        // Fallback frame duration (seconds) used until a real per-video
+        // estimate is available from the frame-rate probe below.
+        const DEFAULT_FRAME_DURATION = 1/30;
+
+        // =================================================================
+        // ERROR BANNER
+        // Lightweight, non-blocking feedback for load/playback failures
+        // =================================================================
+        let errorBannerTimeout = null;
+        function showError(message) {
+            const banner = document.getElementById('errorBanner');
+            if (!banner) return;
+            banner.textContent = message;
+            banner.classList.add('visible');
+            clearTimeout(errorBannerTimeout);
+            errorBannerTimeout = setTimeout(() => banner.classList.remove('visible'), 4000);
+        }
+
+        function videoErrorMessage(video) {
+            const err = video.error;
+            if (!err) return 'Unbekannter Wiedergabefehler.';
+            switch (err.code) {
+                case err.MEDIA_ERR_ABORTED: return 'Laden des Videos abgebrochen.';
+                case err.MEDIA_ERR_NETWORK: return 'Netzwerkfehler beim Laden des Videos.';
+                case err.MEDIA_ERR_DECODE: return 'Video konnte nicht dekodiert werden (beschädigte Datei?).';
+                case err.MEDIA_ERR_SRC_NOT_SUPPORTED: return 'Dieses Videoformat wird nicht unterstützt.';
+                default: return 'Unbekannter Wiedergabefehler.';
+            }
+        }
+
+        // =================================================================
+        // FRAME DURATION DETECTION
+        // Passively measures each video's real frame duration from actual
+        // playback via requestVideoFrameCallback, instead of assuming 30fps.
+        // =================================================================
+        function getFrameDuration(video) {
+            return video._frameDuration || DEFAULT_FRAME_DURATION;
+        }
+
+        function attachFrameRateProbe(video) {
+            if (!('requestVideoFrameCallback' in video)) return;
+            video._frameDuration = null;
+
+            let samples = [];
+            let lastMediaTime = null;
+
+            const probe = (now, metadata) => {
+                if (lastMediaTime !== null) {
+                    const delta = metadata.mediaTime - lastMediaTime;
+                    // Ignore pauses/seeks (non-positive or implausibly large gaps)
+                    if (delta > 0 && delta < 0.5) samples.push(delta);
+                }
+                lastMediaTime = metadata.mediaTime;
+
+                if (samples.length >= 20) {
+                    samples.sort((a, b) => a - b);
+                    video._frameDuration = samples[Math.floor(samples.length / 2)]; // median
+                    return; // stable estimate reached, stop probing
+                }
+                if (!video.paused) {
+                    video.requestVideoFrameCallback(probe);
+                }
+            };
+
+            // Re-probe from scratch each time a new file starts playing
+            video.addEventListener('loadedmetadata', () => {
+                video._frameDuration = null;
+                samples = [];
+                lastMediaTime = null;
+            });
+
+            video.addEventListener('play', () => {
+                if (video._frameDuration === null) {
+                    samples = [];
+                    lastMediaTime = null;
+                    video.requestVideoFrameCallback(probe);
+                }
+            });
+        }
 
         // =================================================================
         // VIDEO METADATA HANDLERS
@@ -911,7 +1029,7 @@
                 window.va('event', { name: 'video_loaded', data: { player: 1 } });
             }
         });
-        
+
         v2.addEventListener('loadedmetadata', () => {
             // Set initial playback rate from speed selector
             v2.playbackRate = parseFloat(document.getElementById('speed2').value);
@@ -920,6 +1038,24 @@
                 window.va('event', { name: 'video_loaded', data: { player: 2 } });
             }
         });
+
+        // Surface load/decode/playback failures instead of failing silently
+        v1.addEventListener('error', () => {
+            showError(`Video 1: ${videoErrorMessage(v1)}`);
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'video_error', data: { player: 1, code: v1.error && v1.error.code } });
+            }
+        });
+        v2.addEventListener('error', () => {
+            showError(`Video 2: ${videoErrorMessage(v2)}`);
+            if (typeof window.va !== 'undefined') {
+                window.va('event', { name: 'video_error', data: { player: 2, code: v2.error && v2.error.code } });
+            }
+        });
+
+        // Passive frame-duration estimation for precise frame stepping/sync
+        attachFrameRateProbe(v1);
+        attachFrameRateProbe(v2);
 
         // =================================================================
         // KEYBOARD CONTROLS (Desktop)
@@ -951,45 +1087,45 @@
                     break;
                     
                 case 'ArrowRight':
-                    // Step forward one frame (1/30th of a second)
+                    // Step forward one frame (uses each video's real frame duration)
                     e.preventDefault();
                     v1.pause();
-                    
+
                     if (compareMode) {
                         v2.pause();
-                        const targetTime = v1.currentTime + 1/30;
+                        const targetTime = v1.currentTime + getFrameDuration(v1);
                         seekInstant(v1, targetTime);
-                        
+
                         if (isLocked) {
                             // Maintain sync offset when locked
                             seekInstant(v2, targetTime + syncDiff);
                         } else {
                             // Step Player 2 independently
-                            seekInstant(v2, v2.currentTime + 1/30);
+                            seekInstant(v2, v2.currentTime + getFrameDuration(v2));
                         }
                     } else {
                         // Single mode: step Player 1 only
-                        seekInstant(v1, v1.currentTime + 1/30);
+                        seekInstant(v1, v1.currentTime + getFrameDuration(v1));
                     }
                     break;
-                    
+
                 case 'ArrowLeft':
                     // Step backward one frame
                     e.preventDefault();
                     v1.pause();
-                    
+
                     if (compareMode) {
                         v2.pause();
-                        const targetTime = v1.currentTime - 1/30;
+                        const targetTime = v1.currentTime - getFrameDuration(v1);
                         seekInstant(v1, targetTime);
-                        
+
                         if (isLocked) {
                             seekInstant(v2, targetTime + syncDiff);
                         } else {
-                            seekInstant(v2, v2.currentTime - 1/30);
+                            seekInstant(v2, v2.currentTime - getFrameDuration(v2));
                         }
                     } else {
-                        seekInstant(v1, v1.currentTime - 1/30);
+                        seekInstant(v1, v1.currentTime - getFrameDuration(v1));
                     }
                     break;
             }
@@ -1137,29 +1273,39 @@
          * @param {Event} event - File input change event
          * @param {string} target - 'main' for Player 1, 'compare' for Player 2
          */
+        // Track the currently active blob URL per player so the previous
+        // one can be revoked before a new file replaces it (avoids leaking
+        // large video buffers across loads within the same session).
+        let v1ObjectUrl = null;
+        let v2ObjectUrl = null;
+
         function loadVideo(event, target) {
             const file = event.target.files[0];
             if (!file) return;
-            
+
             // Create blob URL for local file
             const url = URL.createObjectURL(file);
-            
-            if (target === 'main') { 
-                v1.src = url; 
+
+            if (target === 'main') {
+                if (v1ObjectUrl) URL.revokeObjectURL(v1ObjectUrl);
+                v1ObjectUrl = url;
+                v1.src = url;
                 // Reset speed selector to default
                 const speedSelect = document.getElementById('speed1');
                 speedSelect.value = "1.0";
-                v1.playbackRate = 1.0; 
-                v1.load(); 
+                v1.playbackRate = 1.0;
+                v1.load();
                 // Reset timer offset
-                offset1 = 0; 
-            } else { 
-                v2.src = url; 
+                offset1 = 0;
+            } else {
+                if (v2ObjectUrl) URL.revokeObjectURL(v2ObjectUrl);
+                v2ObjectUrl = url;
+                v2.src = url;
                 const speedSelect = document.getElementById('speed2');
                 speedSelect.value = "1.0";
                 v2.playbackRate = 1.0;
-                v2.load(); 
-                offset2 = 0; 
+                v2.load();
+                offset2 = 0;
             }
         }
 
@@ -1235,42 +1381,48 @@
          * Called on every time update for smooth feedback
          */
         function updateUI() {
-            const syncUIElements = () => {
-                // Update time displays
-                document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
-                document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
+            // Update time displays
+            document.getElementById('time1').innerText = formatTime(v1.currentTime, offset1);
+            document.getElementById('time2').innerText = formatTime(v2.currentTime, offset2);
 
-                // SVG icons for play and pause states
-                const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-                const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+            // SVG icons for play and pause states
+            const playIcon = '<svg width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+            const pauseIcon = '<svg width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
 
-                // Update Player 1 play button icon
-                document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
-                
-                if (compareMode) {
-                    // Update Player 2 and sync button icons
-                    document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
-                    document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
-                    
-                    // Disable individual play buttons when sync-locked
-                    document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
-                    document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
-                }
-            };
+            // Update Player 1 play button icon
+            document.getElementById('playBtn1').innerHTML = v1.paused ? playIcon : pauseIcon;
 
-            // Use requestVideoFrameCallback for precise timing if available
-            if ('requestVideoFrameCallback' in v1) {
-                v1.requestVideoFrameCallback(syncUIElements);
-                if (compareMode) v2.requestVideoFrameCallback(syncUIElements);
-            } else {
-                // Fallback to requestAnimationFrame
-                requestAnimationFrame(syncUIElements);
+            if (compareMode) {
+                // Update Player 2 and sync button icons
+                document.getElementById('playBtn2').innerHTML = v2.paused ? playIcon : pauseIcon;
+                document.getElementById('syncPlayBtn').innerHTML = (v1.paused && v2.paused) ? playIcon : pauseIcon;
+
+                // Disable individual play buttons when sync-locked
+                document.getElementById('playBtn1').classList.toggle('disabled', isLocked);
+                document.getElementById('playBtn2').classList.toggle('disabled', isLocked);
             }
         }
 
-        // Trigger UI update on video time changes
+        // Fallback driver: fires on programmatic seeks too (e.g. while paused
+        // and scrubbing), which the per-frame loop below does not cover.
         v1.ontimeupdate = updateUI;
         v2.ontimeupdate = updateUI;
+
+        // Per-frame driver: while a video is actually playing, refresh the UI
+        // once per real decoded frame instead of the coarser ~4/sec 'timeupdate'
+        // cadence, so the on-screen time reading tracks playback precisely.
+        function startFrameSync(video) {
+            if (!('requestVideoFrameCallback' in video)) return;
+            const step = () => {
+                updateUI();
+                if (!video.paused && !video.ended) {
+                    video.requestVideoFrameCallback(step);
+                }
+            };
+            video.requestVideoFrameCallback(step);
+        }
+        v1.addEventListener('play', () => startFrameSync(v1));
+        v2.addEventListener('play', () => startFrameSync(v2));
 
         // =================================================================
         // SYNC LOCK FUNCTIONALITY
@@ -1291,36 +1443,95 @@
                 // These will be used when go-to-start is pressed while locked
                 syncLockStartTime1 = v1.currentTime;
                 syncLockStartTime2 = v2.currentTime;
-                
+
                 // Calculate and store time difference between videos
                 syncDiff = v2.currentTime - v1.currentTime;
                 btn.classList.add('active');
-                
+
                 // Sync play state
-                if (v1.paused) v2.pause(); 
+                if (v1.paused) v2.pause();
                 else v2.play();
-                
+
                 // Apply global speed to both videos
                 setGlobalSpeed(document.getElementById('globalSpeed').value);
-                
+
                 // Activate sync-lock UI mode (shows global jog overlay)
                 document.body.classList.add('sync-locked');
-                
+
+                // Start watching for playback drift between the two videos
+                startDriftCorrection();
+
                 if (typeof window.va !== 'undefined') {
                     window.va('event', { name: 'sync_lock_enabled' });
                 }
             } else {
                 btn.classList.remove('active');
-                
+
                 // Deactivate sync-lock UI mode
                 document.body.classList.remove('sync-locked');
-                
+
+                // Make sure v2 isn't left running at a drift-corrected rate
+                v2.playbackRate = v1.playbackRate;
+
                 if (typeof window.va !== 'undefined') {
                     window.va('event', { name: 'sync_lock_disabled' });
                 }
             }
             updateUI();
         }
+
+        // =================================================================
+        // SYNC DRIFT CORRECTION
+        // Two independent <video> elements are not driven by a shared clock,
+        // so during locked playback they slowly drift apart (different
+        // buffering/decode timing). This periodically measures the actual
+        // gap against the target syncDiff and corrects it: small drift is
+        // nudged away with a tiny playbackRate adjustment (invisible to the
+        // eye), large drift (e.g. after a stall) is corrected with a hard
+        // seek.
+        // =================================================================
+        const DRIFT_SOFT_THRESHOLD = 0.02;  // seconds - below this, do nothing
+        const DRIFT_HARD_THRESHOLD = 0.15;  // seconds - above this, hard-seek
+        let driftLoopActive = false;
+
+        function driftCorrectionTick() {
+            if (!isLocked || (v1.paused && v2.paused)) {
+                driftLoopActive = false;
+                return;
+            }
+
+            if (!v1.paused && !v2.paused) {
+                const actualDiff = v2.currentTime - v1.currentTime;
+                const error = actualDiff - syncDiff;
+                const absError = Math.abs(error);
+                const baseRate = parseFloat(document.getElementById('globalSpeed').value);
+
+                if (absError > DRIFT_HARD_THRESHOLD) {
+                    // Large gap (e.g. after a buffering stall) - snap back instantly
+                    v2.playbackRate = baseRate;
+                    seekInstant(v2, v1.currentTime + syncDiff);
+                } else if (absError > DRIFT_SOFT_THRESHOLD) {
+                    // Small gap - gently speed up or slow down v2 to close it
+                    v2.playbackRate = error > 0 ? baseRate * 0.97 : baseRate * 1.03;
+                } else if (v2.playbackRate !== baseRate) {
+                    v2.playbackRate = baseRate;
+                }
+            }
+
+            requestAnimationFrame(driftCorrectionTick);
+        }
+
+        function startDriftCorrection() {
+            if (driftLoopActive) return;
+            driftLoopActive = true;
+            requestAnimationFrame(driftCorrectionTick);
+        }
+
+        // Playback can also resume via the sync play button / space bar;
+        // make sure the drift loop is running whenever either video plays
+        // while locked (it's a no-op if already active).
+        v1.addEventListener('play', () => { if (isLocked) startDriftCorrection(); });
+        v2.addEventListener('play', () => { if (isLocked) startDriftCorrection(); });
 
         // =================================================================
         // PLAYBACK SPEED CONTROLS
@@ -1432,8 +1643,8 @@
                         clearInterval(reverseInterval);
                         return;
                     }
-                    // Step back ~1/30th second per frame at 0.25x speed
-                    const stepAmount = (1/30) * HOLD_PLAY_SPEED;
+                    // Step back one real frame at HOLD_PLAY_SPEED
+                    const stepAmount = getFrameDuration(video) * HOLD_PLAY_SPEED;
                     seekInstant(video, video.currentTime - stepAmount);
                 }, 1000/30);
                 
@@ -1480,15 +1691,15 @@
              */
             function stepBackward() {
                 video.pause();
-                seekInstant(video, video.currentTime - 1/30);
+                seekInstant(video, video.currentTime - getFrameDuration(video));
             }
-            
+
             /**
              * Handle single frame step forward
              */
             function stepForward() {
                 video.pause();
-                seekInstant(video, video.currentTime + 1/30);
+                seekInstant(video, video.currentTime + getFrameDuration(video));
             }
             
             // ----- BACKWARD BUTTON EVENT HANDLERS -----
@@ -1620,15 +1831,15 @@
                         clearInterval(reverseInterval);
                         return;
                     }
-                    const stepAmount = (1/30) * HOLD_PLAY_SPEED;
+                    const stepAmount = getFrameDuration(v1) * HOLD_PLAY_SPEED;
                     const targetTime = v1.currentTime - stepAmount;
                     seekInstant(v1, targetTime);
-                    
+
                     if (isLocked) {
                         // Maintain sync offset
                         seekInstant(v2, targetTime + syncDiff);
                     } else {
-                        seekInstant(v2, v2.currentTime - stepAmount);
+                        seekInstant(v2, v2.currentTime - getFrameDuration(v2) * HOLD_PLAY_SPEED);
                     }
                 }, 1000/30);
                 
@@ -1679,31 +1890,31 @@
             function stepSyncBackward() {
                 v1.pause();
                 v2.pause();
-                
-                const targetTime = v1.currentTime - 1/30;
+
+                const targetTime = v1.currentTime - getFrameDuration(v1);
                 seekInstant(v1, targetTime);
-                
+
                 if (isLocked) {
                     seekInstant(v2, targetTime + syncDiff);
                 } else {
-                    seekInstant(v2, v2.currentTime - 1/30);
+                    seekInstant(v2, v2.currentTime - getFrameDuration(v2));
                 }
             }
-            
+
             /**
              * Step both videos forward one frame
              */
             function stepSyncForward() {
                 v1.pause();
                 v2.pause();
-                
-                const targetTime = v1.currentTime + 1/30;
+
+                const targetTime = v1.currentTime + getFrameDuration(v1);
                 seekInstant(v1, targetTime);
-                
+
                 if (isLocked) {
                     seekInstant(v2, targetTime + syncDiff);
                 } else {
-                    seekInstant(v2, v2.currentTime + 1/30);
+                    seekInstant(v2, v2.currentTime + getFrameDuration(v2));
                 }
             }
             
@@ -1813,9 +2024,9 @@
             const video = document.getElementById(videoId);
             const zoomWrapper = document.getElementById(zoomId);
             const ticks = document.getElementById(ticksId);
-            
+
             // Zoom and scrub state
-            let state = { 
+            let state = {
                 isDragging: false,       // Currently dragging for scrub
                 lastX: 0,                // Last X position for delta calculation
                 lastY: 0,                // Last Y position for delta calculation
@@ -1829,7 +2040,8 @@
                 velocity: 0,             // Scrub velocity for inertia
                 inertiaActive: false,    // Whether inertia is currently animating
                 tickPos: 0,              // Tick animation position
-                isMouseDragging: false   // Mouse drag state (vs touch)
+                pendingDeltaX: 0,        // Accumulated drag delta not yet applied
+                rafScheduled: false      // Whether a scrub flush is queued for next frame
             };
 
             /**
@@ -1860,116 +2072,145 @@
             };
 
             /**
+             * Apply one accumulated drag delta to the video(s) and visuals.
+             * Called at most once per animation frame (see scheduleScrubFlush),
+             * so a burst of pointer/touch move events faster than the display
+             * refresh rate collapses into a single seek instead of queuing up
+             * seeks the video can't keep up with (the main cause of scrub jank).
+             */
+            const flushScrub = () => {
+                state.rafScheduled = false;
+                const deltaX = state.pendingDeltaX;
+                state.pendingDeltaX = 0;
+                if (deltaX === 0) return;
+
+                state.velocity = deltaX * SCRUB_PIXELS_TO_SECONDS;
+
+                const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * SCRUB_PIXELS_TO_SECONDS);
+                if (isLocked) {
+                    seekInstant(v1, targetTime);
+                    seekInstant(v2, targetTime + syncDiff);
+                } else {
+                    seekInstant(video, targetTime);
+                }
+
+                state.tickPos += deltaX;
+                ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
+                updateGlobalTicks(deltaX);
+            };
+
+            const scheduleScrubFlush = () => {
+                if (state.rafScheduled) return;
+                state.rafScheduled = true;
+                requestAnimationFrame(flushScrub);
+            };
+
+            /**
              * Apply inertia scrolling after drag release
              * Gradually decays velocity for smooth stop
              */
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
-                
+
                 // Continue while velocity is significant
                 if (Math.abs(state.velocity) > 0.001) {
                     const targetTime = (isLocked ? v1.currentTime : video.currentTime) + state.velocity;
-                    
-                    if (isLocked) { 
-                        seekInstant(v1, targetTime); 
-                        // Use requestAnimationFrame for smooth sync
-                        requestAnimationFrame(() => seekInstant(v2, targetTime + syncDiff));
-                    } else { 
-                        seekInstant(video, targetTime); 
+
+                    if (isLocked) {
+                        seekInstant(v1, targetTime);
+                        seekInstant(v2, targetTime + syncDiff);
+                    } else {
+                        seekInstant(video, targetTime);
                     }
-                    
+
                     // Apply friction
-                    state.velocity *= 0.95; 
-                    
+                    state.velocity *= 0.95;
+
                     // Animate tick marks
                     state.tickPos += (state.velocity * 1000);
                     ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
                     updateGlobalTicks(state.velocity * 1000);
-                    
+
                     requestAnimationFrame(applyInertia);
-                } else { 
-                    state.inertiaActive = false; 
+                } else {
+                    state.inertiaActive = false;
                 }
             };
 
-            // ----- MOUSE DRAG EVENTS -----
-            
-            jog.addEventListener('mousedown', (e) => {
-                // Only handle left mouse button
-                if (e.button !== 0) return;
-                
-                state.isMouseDragging = true;
+            // ----- POINTER EVENTS (mouse / pen) -----
+            // Touch is intentionally excluded here and handled by the native
+            // touch listeners below, since pinch-zoom needs simultaneous
+            // multi-touch data that Pointer Events don't expose as directly.
+            // Using pointer capture means we don't need permanent
+            // document-level mousemove/mouseup listeners: the element keeps
+            // receiving events even once the pointer leaves its bounds.
+
+            jog.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'touch') return;
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+                jog.setPointerCapture(e.pointerId);
                 state.isDragging = true;
                 state.lastX = e.clientX;
                 state.lastY = e.clientY;
                 state.velocity = 0;
-                
+                state.pendingDeltaX = 0;
+                state.inertiaActive = false;
+
                 // Pause videos during scrub
-                v1.pause(); 
+                v1.pause();
                 v2.pause();
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', (e) => {
-                if (!state.isMouseDragging) return;
-                
+            jog.addEventListener('pointermove', (e) => {
+                if (e.pointerType === 'touch' || !state.isDragging) return;
+
                 const deltaX = e.clientX - state.lastX;
-                // Calculate velocity for inertia
-                state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                 state.lastX = e.clientX;
-                
-                // Scrub video based on drag distance
-                const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
-                if (isLocked) { 
-                    seekInstant(v1, targetTime); 
-                    requestAnimationFrame(() => seekInstant(v2, targetTime + syncDiff));
-                } else { 
-                    seekInstant(video, targetTime); 
-                }
-                
-                // Animate tick marks
-                state.tickPos += deltaX;
-                ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                updateGlobalTicks(deltaX);
+                state.pendingDeltaX += deltaX;
+                scheduleScrubFlush();
             });
 
-            document.addEventListener('mouseup', () => {
-                // Trigger inertia if releasing with velocity
-                if (state.isMouseDragging && Math.abs(state.velocity) > 0.001) {
+            const endPointerDrag = (e) => {
+                if (e.pointerType === 'touch' || !state.isDragging) return;
+                state.isDragging = false;
+                if (Math.abs(state.velocity) > 0.001) {
                     state.inertiaActive = true;
                     applyInertia();
                 }
-                state.isMouseDragging = false;
-                state.isDragging = false;
-            });
+            };
+            jog.addEventListener('pointerup', endPointerDrag);
+            jog.addEventListener('pointercancel', endPointerDrag);
 
             // ----- TOUCH EVENTS -----
-            
+
             jog.addEventListener('touchstart', (e) => {
                 // Stop any ongoing inertia
-                state.inertiaActive = false; 
-                
+                state.inertiaActive = false;
+
                 if (e.touches.length === 2) {
                     // Two-finger gesture: pinch zoom
                     state.initialDist = Math.hypot(
-                        e.touches[0].clientX - e.touches[1].clientX, 
+                        e.touches[0].clientX - e.touches[1].clientX,
                         e.touches[0].clientY - e.touches[1].clientY
                     );
                     state.initialScale = state.scale;
                     // Track center point of two fingers
                     state.lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     state.lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    
+
                     if (typeof window.va !== 'undefined') {
                         window.va('event', { name: 'zoom_started' });
                     }
                 } else {
                     // Single-finger: timeline scrub
-                    state.isDragging = true; 
-                    v1.pause(); 
+                    state.isDragging = true;
+                    v1.pause();
                     v2.pause();
-                    state.lastX = e.touches[0].clientX; 
+                    state.lastX = e.touches[0].clientX;
                     state.velocity = 0;
+                    state.pendingDeltaX = 0;
                 }
             }, {passive: false});
 
@@ -1977,70 +2218,59 @@
                 if (e.touches.length === 2) {
                     // Pinch zoom handling
                     e.preventDefault();
-                    
+
                     // Calculate new distance between fingers
                     const d = Math.hypot(
-                        e.touches[0].clientX - e.touches[1].clientX, 
+                        e.touches[0].clientX - e.touches[1].clientX,
                         e.touches[0].clientY - e.touches[1].clientY
                     );
-                    
+
                     // Calculate new center point
                     const curX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
                     const curY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    
+
                     // Calculate new scale (clamped between 1x and 5x)
                     state.scale = Math.max(1, Math.min(state.initialScale * (d / state.initialDist), 5));
-                    
+
                     // Pan to follow finger center when zoomed
-                    if (state.scale > 1) { 
-                        state.posX += (curX - state.lastTouchX); 
-                        state.posY += (curY - state.lastTouchY); 
-                    } else { 
+                    if (state.scale > 1) {
+                        state.posX += (curX - state.lastTouchX);
+                        state.posY += (curY - state.lastTouchY);
+                    } else {
                         // Reset pan when not zoomed
-                        state.posX = 0; 
-                        state.posY = 0; 
+                        state.posX = 0;
+                        state.posY = 0;
                     }
-                    
-                    state.lastTouchX = curX; 
+
+                    state.lastTouchX = curX;
                     state.lastTouchY = curY;
                     updateTransform();
-                    
+
                 } else if (state.isDragging) {
                     // Single-finger scrub
                     const deltaX = e.touches[0].clientX - state.lastX;
-                    state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                     state.lastX = e.touches[0].clientX;
-                    
-                    const targetTime = (isLocked ? v1.currentTime : video.currentTime) + (deltaX * 0.01);
-                    if (isLocked) { 
-                        seekInstant(v1, targetTime); 
-                        requestAnimationFrame(() => seekInstant(v2, targetTime + syncDiff));
-                    } else { 
-                        seekInstant(video, targetTime); 
-                    }
-                    
-                    state.tickPos += deltaX;
-                    ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                    updateGlobalTicks(deltaX);
+                    state.pendingDeltaX += deltaX;
+                    scheduleScrubFlush();
                 }
             }, {passive: false});
 
-            jog.addEventListener('touchend', () => { 
+            jog.addEventListener('touchend', () => {
                 // Apply inertia if releasing with velocity
-                if (state.isDragging && Math.abs(state.velocity) > 0.001) { 
-                    state.inertiaActive = true; 
-                    applyInertia(); 
+                if (state.isDragging && Math.abs(state.velocity) > 0.001) {
+                    state.inertiaActive = true;
+                    applyInertia();
                 }
-                state.isDragging = false; 
+                state.isDragging = false;
             });
-            
+
             // Double-tap to reset zoom
-            jog.addEventListener('dblclick', () => { 
-                state.scale = 1; 
-                state.posX = 0; 
-                state.posY = 0; 
-                updateTransform(); 
-                
+            jog.addEventListener('dblclick', () => {
+                state.scale = 1;
+                state.posX = 0;
+                state.posY = 0;
+                updateTransform();
+
                 if (typeof window.va !== 'undefined') {
                     window.va('event', { name: 'zoom_reset' });
                 }
@@ -2065,16 +2295,17 @@
         function setupGlobalJogOverlay(jogId, ticksId) {
             const jog = document.getElementById(jogId);
             const ticks = document.getElementById(ticksId);
-            
+
             if (!jog || !ticks) return;
-            
-            let state = { 
-                isDragging: false, 
-                lastX: 0, 
-                velocity: 0, 
-                inertiaActive: false, 
+
+            let state = {
+                isDragging: false,
+                lastX: 0,
+                velocity: 0,
+                inertiaActive: false,
                 tickPos: 0,
-                isMouseDragging: false
+                pendingDeltaX: 0,
+                rafScheduled: false
             };
 
             /**
@@ -2082,114 +2313,128 @@
              */
             const applyInertia = () => {
                 if (!state.inertiaActive) return;
-                
+
                 if (Math.abs(state.velocity) > 0.001) {
                     const targetTime = v1.currentTime + state.velocity;
-                    seekInstant(v1, targetTime); 
+                    seekInstant(v1, targetTime);
                     seekInstant(v2, targetTime + syncDiff);
-                    
-                    state.velocity *= 0.95; 
-                    state.tickPos += (state.velocity * 1000); 
-                    
+
+                    state.velocity *= 0.95;
+                    state.tickPos += (state.velocity * 1000);
+
                     // Update both global tick displays
                     ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                    
+
                     // Sync the other overlay's ticks
                     const otherId = ticksId === 'ticksGlobal1' ? 'ticksGlobal2' : 'ticksGlobal1';
                     const otherTicks = document.getElementById(otherId);
                     if (otherTicks) {
                         otherTicks.style.transform = `translateX(${state.tickPos % 200}px)`;
                     }
-                    
+
                     requestAnimationFrame(applyInertia);
-                } else { 
-                    state.inertiaActive = false; 
+                } else {
+                    state.inertiaActive = false;
                 }
             };
 
-            // ----- MOUSE EVENTS -----
-            
-            jog.addEventListener('mousedown', (e) => {
-                if (e.button !== 0) return;
-                state.isMouseDragging = true;
+            /**
+             * Apply one accumulated drag delta per animation frame, same
+             * coalescing strategy as the per-player jog wheel, to keep
+             * dragging smooth even when input events fire faster than the
+             * display refresh rate.
+             */
+            const flushScrub = () => {
+                state.rafScheduled = false;
+                const deltaX = state.pendingDeltaX;
+                state.pendingDeltaX = 0;
+                if (deltaX === 0) return;
+
+                state.velocity = deltaX * SCRUB_PIXELS_TO_SECONDS;
+
+                const targetTime = v1.currentTime + (deltaX * SCRUB_PIXELS_TO_SECONDS);
+                seekInstant(v1, targetTime);
+                seekInstant(v2, targetTime + syncDiff);
+
+                state.tickPos += deltaX;
+                ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
+                const otherId = ticksId === 'ticksGlobal1' ? 'ticksGlobal2' : 'ticksGlobal1';
+                const otherTicks = document.getElementById(otherId);
+                if (otherTicks) {
+                    otherTicks.style.transform = `translateX(${state.tickPos % 200}px)`;
+                }
+            };
+
+            const scheduleScrubFlush = () => {
+                if (state.rafScheduled) return;
+                state.rafScheduled = true;
+                requestAnimationFrame(flushScrub);
+            };
+
+            // ----- POINTER EVENTS (mouse / pen) -----
+
+            jog.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'touch') return;
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+                jog.setPointerCapture(e.pointerId);
                 state.isDragging = true;
                 state.lastX = e.clientX;
                 state.velocity = 0;
-                v1.pause(); 
+                state.pendingDeltaX = 0;
+                state.inertiaActive = false;
+                v1.pause();
                 v2.pause();
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', (e) => {
-                if (!state.isMouseDragging) return;
-                
+            jog.addEventListener('pointermove', (e) => {
+                if (e.pointerType === 'touch' || !state.isDragging) return;
+
                 const deltaX = e.clientX - state.lastX;
-                state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                 state.lastX = e.clientX;
-                
-                const targetTime = v1.currentTime + (deltaX * 0.01);
-                seekInstant(v1, targetTime); 
-                seekInstant(v2, targetTime + syncDiff);
-                
-                state.tickPos += deltaX;
-                
-                // Update both tick displays
-                ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                const otherId = ticksId === 'ticksGlobal1' ? 'ticksGlobal2' : 'ticksGlobal1';
-                const otherTicks = document.getElementById(otherId);
-                if (otherTicks) {
-                    otherTicks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                }
+                state.pendingDeltaX += deltaX;
+                scheduleScrubFlush();
             });
 
-            document.addEventListener('mouseup', () => {
-                if (state.isMouseDragging && Math.abs(state.velocity) > 0.001) {
+            const endPointerDrag = (e) => {
+                if (e.pointerType === 'touch' || !state.isDragging) return;
+                state.isDragging = false;
+                if (Math.abs(state.velocity) > 0.001) {
                     state.inertiaActive = true;
                     applyInertia();
                 }
-                state.isMouseDragging = false;
-                state.isDragging = false;
-            });
+            };
+            jog.addEventListener('pointerup', endPointerDrag);
+            jog.addEventListener('pointercancel', endPointerDrag);
 
             // ----- TOUCH EVENTS -----
-            
+
             jog.addEventListener('touchstart', (e) => {
-                state.inertiaActive = false; 
-                state.isDragging = true; 
-                v1.pause(); 
+                state.inertiaActive = false;
+                state.isDragging = true;
+                v1.pause();
                 v2.pause();
-                state.lastX = e.touches[0].clientX; 
+                state.lastX = e.touches[0].clientX;
                 state.velocity = 0;
+                state.pendingDeltaX = 0;
             }, {passive: false});
 
             jog.addEventListener('touchmove', (e) => {
                 if (!state.isDragging) return;
-                
+
                 const deltaX = e.touches[0].clientX - state.lastX;
-                state.velocity = deltaX * (SCRUB_SENSITIVITY / window.innerWidth);
                 state.lastX = e.touches[0].clientX;
-                
-                const targetTime = v1.currentTime + (deltaX * 0.01);
-                seekInstant(v1, targetTime); 
-                seekInstant(v2, targetTime + syncDiff);
-                
-                state.tickPos += deltaX;
-                ticks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                
-                // Sync other overlay
-                const otherId = ticksId === 'ticksGlobal1' ? 'ticksGlobal2' : 'ticksGlobal1';
-                const otherTicks = document.getElementById(otherId);
-                if (otherTicks) {
-                    otherTicks.style.transform = `translateX(${state.tickPos % 200}px)`;
-                }
+                state.pendingDeltaX += deltaX;
+                scheduleScrubFlush();
             }, {passive: false});
 
-            jog.addEventListener('touchend', () => { 
-                if (state.isDragging && Math.abs(state.velocity) > 0.001) { 
-                    state.inertiaActive = true; 
-                    applyInertia(); 
+            jog.addEventListener('touchend', () => {
+                if (state.isDragging && Math.abs(state.velocity) > 0.001) {
+                    state.inertiaActive = true;
+                    applyInertia();
                 }
-                state.isDragging = false; 
+                state.isDragging = false;
             });
         }
         
